@@ -15,6 +15,7 @@
 #include <linux/device.h>
 #include <linux/firmware.h>
 #include <linux/io.h>
+#include <linux/memremap.h>
 #include <linux/module.h>
 #include <linux/of.h>
 #include <linux/platform_device.h>
@@ -36,7 +37,8 @@ struct ums9117_modem {
 	struct dsp_image lte;
 	void __iomem *gsm_virt;
 	void __iomem *lte_virt;
-	bool loaded;
+	bool gsm_loaded;
+	bool lte_loaded;
 };
 
 static int load_one(struct ums9117_modem *modem, const struct dsp_image *img,
@@ -67,10 +69,9 @@ static int load_one(struct ums9117_modem *modem, const struct dsp_image *img,
 	payload = fw->data + img->header;
 	len = fw->size - img->header;
 	if (len > img->region) {
-		dev_err(modem->dev, "%s too large (%zu > %zu)\n",
-			img->name, len, img->region);
-		ret = -EINVAL;
-		goto out;
+		dev_warn(modem->dev, "%s truncated to region (%zu > %zu)\n",
+			 img->name, len, img->region);
+		len = img->region;
 	}
 
 	memcpy_toio(virt, payload, len);
@@ -82,27 +83,36 @@ out:
 	return ret;
 }
 
-static int do_load(struct ums9117_modem *modem)
+static int load_gsm(struct ums9117_modem *modem)
 {
 	int ret;
 
-	if (modem->loaded)
+	if (modem->gsm_loaded)
 		return 0;
 	ret = load_one(modem, &modem->gsm, modem->gsm_virt, true);
-	if (ret)
-		return ret;
+	if (!ret)
+		modem->gsm_loaded = true;
+	return ret;
+}
+
+static int load_lte(struct ums9117_modem *modem)
+{
+	int ret;
+
+	if (modem->lte_loaded)
+		return 0;
 	ret = load_one(modem, &modem->lte, modem->lte_virt, false);
-	if (ret)
-		return ret;
-	modem->loaded = true;
-	return 0;
+	if (!ret)
+		modem->lte_loaded = true;
+	return ret;
 }
 
 static ssize_t loaded_show(struct device *dev, struct device_attribute *attr,
 			   char *buf)
 {
-	return sysfs_emit(buf, "%d\n",
-			  ((struct ums9117_modem *)dev_get_drvdata(dev))->loaded);
+	struct ums9117_modem *modem = dev_get_drvdata(dev);
+
+	return sysfs_emit(buf, "%d\n", modem->gsm_loaded && modem->lte_loaded);
 }
 
 static ssize_t load_store(struct device *dev, struct device_attribute *attr,
@@ -112,19 +122,42 @@ static ssize_t load_store(struct device *dev, struct device_attribute *attr,
 	int ret;
 
 	if (count && buf[0] == '1') {
-		ret = do_load(modem);
+		ret = load_gsm(modem);
+		if (ret)
+			return ret;
+		ret = load_lte(modem);
 		if (ret)
 			return ret;
 	}
 	return count;
 }
 
+static ssize_t load_gsm_store(struct device *dev, struct device_attribute *attr,
+			      const char *buf, size_t count)
+{
+	if (count && buf[0] == '1')
+		return load_gsm(dev_get_drvdata(dev)) ?: count;
+	return count;
+}
+
+static ssize_t load_lte_store(struct device *dev, struct device_attribute *attr,
+			      const char *buf, size_t count)
+{
+	if (count && buf[0] == '1')
+		return load_lte(dev_get_drvdata(dev)) ?: count;
+	return count;
+}
+
 static DEVICE_ATTR_RO(loaded);
 static DEVICE_ATTR_WO(load);
+static DEVICE_ATTR_WO(load_gsm);
+static DEVICE_ATTR_WO(load_lte);
 
 static struct attribute *modem_attrs[] = {
 	&dev_attr_loaded.attr,
 	&dev_attr_load.attr,
+	&dev_attr_load_gsm.attr,
+	&dev_attr_load_lte.attr,
 	NULL,
 };
 ATTRIBUTE_GROUPS(modem);
@@ -145,18 +178,21 @@ static int ums9117_modem_probe(struct platform_device *pdev)
 		return -ENODEV;
 	modem->gsm.phys = res->start;
 	modem->gsm.region = resource_size(res);
-	modem->gsm_virt = devm_ioremap_resource(dev, res);
-	if (IS_ERR(modem->gsm_virt))
-		return PTR_ERR(modem->gsm_virt);
+	/* The DT reserved-memory node already owns this region. It is SRAM, not
+	 * an MMIO device, so map it as normal memory; ioremap(MT_DEVICE) is
+	 * rejected for addresses memblock still reports as mapped RAM. */
+	modem->gsm_virt = (void __iomem *)devm_memremap(dev, res->start, resource_size(res), MEMREMAP_WB);
+	if (!modem->gsm_virt)
+		return -ENOMEM;
 
 	res = platform_get_resource_byname(pdev, IORESOURCE_MEM, "dsp-lte");
 	if (!res)
 		return -ENODEV;
 	modem->lte.phys = res->start;
 	modem->lte.region = resource_size(res);
-	modem->lte_virt = devm_ioremap_resource(dev, res);
-	if (IS_ERR(modem->lte_virt))
-		return PTR_ERR(modem->lte_virt);
+	modem->lte_virt = (void __iomem *)devm_memremap(dev, res->start, resource_size(res), MEMREMAP_WB);
+	if (!modem->lte_virt)
+		return -ENOMEM;
 
 	{
 		u32 header;
