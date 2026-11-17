@@ -4,7 +4,7 @@ width = 240
 height = 320
 id = 0x303001
 id_mask = 0xffffffff
-memory_access = 0x00
+memory_access = 0x40
 transport = "dbi"
 license = "GPL-2.0-only AND Unlicense"
 copyright = ["fpdoom contributors"]
@@ -177,7 +177,7 @@ cold_finish = [
   { command = 0x11, delay_ms = 200 },
   { command = 0x29 },
   { command = 0x36, data = [
-    0x00,
+    0x40,
   ] },
   { command = 0x2a, data = [
     0x00,
@@ -194,7 +194,7 @@ cold_finish = [
 ]
 wake_finish = [
   { command = 0x36, data = [
-    0x00,
+    0x40,
   ] },
   { command = 0x11, delay_ms = 200 },
   { command = 0x29, delay_ms = 20 },
