@@ -1,0 +1,63 @@
+# SPDX-License-Identifier: GPL-2.0-only
+%YAML 1.2
+---
+$id: http://devicetree.org/schemas/modem/fplinux,ums9117-modem.yaml#
+$schema: http://devicetree.org/meta-schemas/core.yaml#
+
+title: UMS9117 cellular DSP loader
+
+maintainers:
+  - FPLinux contributors <313246064+fplinux-dev@users.noreply.github.com>
+
+description: |
+  Loads the stock GSM and LTE CEVA layer-1 images into fixed physical regions.
+  Both regions must be excluded from System RAM. This binding covers image
+  loading only; DSP reset/clock control and the mailbox protocol are not
+  represented yet.
+
+properties:
+  compatible:
+    const: fplinux,ums9117-modem
+
+  reg:
+    items:
+      - description: GSM DSP load region
+      - description: LTE DSP load region
+
+  reg-names:
+    items:
+      - const: dsp-gsm
+      - const: dsp-lte
+
+  firmware-name-gsm:
+    $ref: /schemas/types.yaml#/definitions/string
+    description: Firmware loader name of the GSM DSP image.
+
+  firmware-name-lte:
+    $ref: /schemas/types.yaml#/definitions/string
+    description: Firmware loader name of the LTE DSP image.
+
+  fplinux,gsm-header:
+    $ref: /schemas/types.yaml#/definitions/uint32
+    description: Bytes to skip before the GSM payload. Defaults to 0x80.
+
+  fplinux,lte-header:
+    $ref: /schemas/types.yaml#/definitions/uint32
+    description: Bytes to skip before the LTE payload. Defaults to 0.
+
+required:
+  - compatible
+  - reg
+  - reg-names
+
+additionalProperties: false
+
+examples:
+  - |
+    modem@80100000 {
+        compatible = "fplinux,ums9117-modem";
+        reg = <0x80100000 0x300000>, <0x80448000 0x2e4000>;
+        reg-names = "dsp-gsm", "dsp-lte";
+        firmware-name-gsm = "ums9117/gsm_dsp.bin";
+        firmware-name-lte = "ums9117/lte_dsp.bin";
+    };

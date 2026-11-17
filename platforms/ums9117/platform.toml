@@ -309,6 +309,14 @@ source = "platforms/ums9117/linux/fragments/drivers/bluetooth/bluetooth-parent.M
 destination = "drivers/bluetooth/Makefile"
 
 [[linux.appends]]
+source = "platforms/ums9117/linux/fragments/drivers/modem/modem-parent.Kconfig"
+destination = "drivers/Kconfig"
+
+[[linux.appends]]
+source = "platforms/ums9117/linux/fragments/drivers/modem/modem-parent.Makefile"
+destination = "drivers/Makefile"
+
+[[linux.appends]]
 source = "platforms/ums9117/linux/fragments/drivers/clk/sc2720-clk.Kconfig"
 destination = "drivers/clk/Kconfig"
 

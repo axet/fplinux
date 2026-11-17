@@ -31,9 +31,29 @@
 			reg = <0x83f00000 0x00100000>;
 			no-map;
 		};
+
+		/* Carve out the stock CEVA DSP load regions for the modem loader. */
+		dsp_gsm: dsp-gsm@80100000 {
+			reg = <0x80100000 0x00300000>;
+			no-map;
+		};
+
+		dsp_lte: dsp-lte@80448000 {
+			reg = <0x80448000 0x002e4000>;
+			no-map;
+		};
 	};
 
 	soc {
+		/* Cellular DSP loader foundation (image load only, no reset/clock yet). */
+		modem@80100000 {
+			compatible = "fplinux,ums9117-modem";
+			reg = <0x80100000 0x00300000>, <0x80448000 0x002e4000>;
+			reg-names = "dsp-gsm", "dsp-lte";
+			firmware-name-gsm = "ums9117/gsm_dsp.bin";
+			firmware-name-lte = "ums9117/lte_dsp.bin";
+		};
+
 		camera_id_mux: pinctrl@402a01e8 {
 			compatible = "pinctrl-single";
 			reg = <0x402a01e8 0xc>;

@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: GPL-2.0-only
+config UMS9117_MODEM
+	bool "UMS9117 cellular DSP loader foundation"
+	depends on ARCH_UMS9117 && OF
+	select FW_LOADER
+	help
+	  Load the stock GSM and LTE CEVA layer-1 images into their fixed
+	  physical regions and expose load/status through sysfs. This is a
+	  foundation only: it does not release DSP resets, configure clocks,
+	  or implement a protocol stack. The DSP regions must be excluded
+	  from System RAM in the device tree before enabling this option.
