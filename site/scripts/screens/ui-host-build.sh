@@ -57,7 +57,7 @@ ui_host_build_application() {
 	ui_host_compile_lvgl -O2 \
 		$(pkg-config --cflags wayland-client xkbcommon json-c) \
 		"$ui_host_ui/fplinux-ui.c" "$ui_host_ui/fplinux-ui-session.c" \
-		"$ui_host_ui/fplinux-ui-style.c" \
+		"$ui_host_ui/fplinux-ui-ambient.c" "$ui_host_ui/fplinux-ui-style.c" \
 		"$ui_host_ui/fplinux-ui-frame.c" \
 		"$ui_host_ui/fplinux-audio-client.c" \
 		"$ui_host_ui/fplinux-ui-text.c" "$ui_host_ui/fplinux-ui-text-model.c" \

@@ -4,6 +4,7 @@
 #include "fplinux-audio-client-internal.h"
 #include "fplinux-audio-protocol.h"
 #include "fplinux-language.h"
+#include "fplinux-ui-ambient.h"
 #include "fplinux-ui-audio.h"
 #include "fplinux-ui-fonts.h"
 #include "fplinux-ui-frame-private.h"
@@ -248,6 +249,12 @@ struct fplinux_ui {
 	 */
 	uint64_t mode_hold_until_ms;
 	lv_display_t *display;
+	/* Ambient accents live on LVGL's top layer, above every screen. */
+	struct fplinux_ambient *ambient;
+	bool ambient_enabled;
+	lv_timer_t *ambient_timer;
+	lv_obj_t *ambient_root;
+	lv_obj_t *ambient_strips[FPLINUX_AMBIENT_ZONE_COUNT][2];
 	uint16_t *canvas;
 	/*
 	 * The bounding rectangle of the canvas drawn since the last commit,
@@ -317,6 +324,9 @@ static void queue_frame_ack(struct fplinux_ui *ui,
 
 static void marquee_set_visible(struct fplinux_ui *ui, bool visible);
 static void marquee_restart(struct fplinux_ui *ui);
+static void ambient_layout(struct fplinux_ui *ui);
+static void ambient_on_event(struct fplinux_ui *ui,
+			     const struct fplinux_ui_event *event);
 static void resize(struct fplinux_ui *ui, int width, int height,
 		   bool fullscreen);
 static void show_legend_bar(struct fplinux_ui *ui);
@@ -505,6 +515,7 @@ static struct repeat_owner dispatch_event(struct fplinux_ui *ui,
 
 	if (!ui->display || (ui->quit && event->type != FPLINUX_UI_EVENT_CLOSE))
 		return owner;
+	ambient_on_event(ui, event);
 	if (event->type == FPLINUX_UI_EVENT_INPUT_CANCEL)
 		fplinux_ui_text_cancel_input(ui, event->key.source);
 	if (event->type == FPLINUX_UI_EVENT_KEY) {
@@ -680,12 +691,209 @@ static void hold_animations(const struct fplinux_ui *ui)
 {
 	lv_timer_t *animations = lv_anim_get_timer();
 
+	if (ui->ambient_timer) {
+		if (!ui->visible || !ui->ambient_enabled)
+			lv_timer_pause(ui->ambient_timer);
+		else
+			lv_timer_resume(ui->ambient_timer);
+	}
 	if (!animations)
 		return;
 	if (!ui->visible)
 		lv_timer_pause(animations);
 	else if (lv_anim_count_running())
 		lv_timer_resume(animations);
+}
+
+/* Convert 8-bit RGB to the 0xRRGGBB form lv_color_hex() expects. */
+static uint32_t ambient_hex(struct fplinux_ambient_rgb rgb)
+{
+	return ((uint32_t)rgb.r << 16) | ((uint32_t)rgb.g << 8) | rgb.b;
+}
+
+/*
+ * The default sink paints each zone twice on LVGL's top layer: a wider,
+ * dimmer halo and a narrow core. Both are decoration only; they never take
+ * input from keys and never change the application's own layout.
+ */
+static void ambient_apply(void *context,
+			  const struct fplinux_ambient_frame *frame)
+{
+	struct fplinux_ui *ui = context;
+
+	for (unsigned int zone = 0; zone < FPLINUX_AMBIENT_ZONE_COUNT; ++zone) {
+		struct fplinux_ambient_rgb halo = {
+			.r = (uint8_t)(frame->zone[zone].r / 3),
+			.g = (uint8_t)(frame->zone[zone].g / 3),
+			.b = (uint8_t)(frame->zone[zone].b / 3),
+		};
+		lv_opa_t opacity = (lv_opa_t)((uint32_t)frame->opacity *
+					      frame->intensity[zone] / 255);
+
+		lv_obj_set_style_bg_color(ui->ambient_strips[zone][1],
+					  lv_color_hex(ambient_hex(halo)), 0);
+		lv_obj_set_style_bg_opa(ui->ambient_strips[zone][1],
+					(lv_opa_t)(opacity / 3), 0);
+		lv_obj_set_style_bg_color(ui->ambient_strips[zone][0],
+					  lv_color_hex(ambient_hex(
+						  frame->zone[zone])),
+					  0);
+		lv_obj_set_style_bg_opa(ui->ambient_strips[zone][0], opacity, 0);
+		lv_obj_invalidate(ui->ambient_strips[zone][1]);
+		lv_obj_invalidate(ui->ambient_strips[zone][0]);
+	}
+}
+
+/* Positions are inclusive top-left corners, refreshed after every resize. */
+static void ambient_layout(struct fplinux_ui *ui)
+{
+	static const uint8_t core = 3;
+	static const uint8_t halo = 8;
+	int width = ui->width;
+	int height = ui->height;
+	int x[FPLINUX_AMBIENT_ZONE_COUNT];
+	int y[FPLINUX_AMBIENT_ZONE_COUNT];
+
+	if (!ui->ambient_root)
+		return;
+	x[FPLINUX_AMBIENT_TOP] = 0;
+	y[FPLINUX_AMBIENT_TOP] = 0;
+	x[FPLINUX_AMBIENT_RIGHT] = width - core;
+	y[FPLINUX_AMBIENT_RIGHT] = 0;
+	x[FPLINUX_AMBIENT_BOTTOM] = 0;
+	y[FPLINUX_AMBIENT_BOTTOM] = height - core;
+	x[FPLINUX_AMBIENT_LEFT] = 0;
+	y[FPLINUX_AMBIENT_LEFT] = 0;
+	lv_obj_set_size(ui->ambient_root, width, height);
+	for (unsigned int zone = 0; zone < FPLINUX_AMBIENT_ZONE_COUNT; ++zone) {
+		bool vertical = zone == FPLINUX_AMBIENT_LEFT ||
+				zone == FPLINUX_AMBIENT_RIGHT;
+
+		lv_obj_set_pos(ui->ambient_strips[zone][0],
+			       vertical ? x[zone] : 0,
+			       vertical ? 0 : y[zone]);
+		lv_obj_set_size(ui->ambient_strips[zone][0],
+				vertical ? core : width,
+				vertical ? height : core);
+		lv_obj_set_pos(ui->ambient_strips[zone][1],
+			       vertical ?
+				       (zone == FPLINUX_AMBIENT_RIGHT ?
+						width - halo :
+						0) :
+				       0,
+			       vertical ? 0 :
+					  (zone == FPLINUX_AMBIENT_BOTTOM ?
+						   height - halo :
+						   0));
+		lv_obj_set_size(ui->ambient_strips[zone][1],
+				vertical ? halo : width,
+				vertical ? height : halo);
+	}
+}
+
+static void ambient_timer_cb(lv_timer_t *timer)
+{
+	struct fplinux_ui *ui = lv_timer_get_user_data(timer);
+
+	if (ui && ui->visible && ui->ambient_enabled)
+		fplinux_ambient_tick(ui->ambient, fplinux_ui_now_ms());
+}
+
+static void ambient_on_event(struct fplinux_ui *ui,
+			     const struct fplinux_ui_event *event)
+{
+	if (!ui->ambient)
+		return;
+	switch (event->type) {
+	case FPLINUX_UI_EVENT_ACTIVATION:
+		fplinux_ambient_set_scene(ui->ambient, FPLINUX_AMBIENT_ACTIVE);
+		break;
+	case FPLINUX_UI_EVENT_LIFECYCLE:
+		if (fplinux_ui_lifecycle(ui) == FPLINUX_UI_FOREGROUND)
+			fplinux_ambient_set_scene(ui->ambient,
+						  FPLINUX_AMBIENT_IDLE);
+		break;
+	case FPLINUX_UI_EVENT_RESIZE:
+		ambient_layout(ui);
+		break;
+	case FPLINUX_UI_EVENT_CLOSE:
+		ui->ambient_enabled = false;
+		if (ui->ambient_timer)
+			lv_timer_pause(ui->ambient_timer);
+		fplinux_ambient_set_enabled(ui->ambient, false);
+		break;
+	default:
+		break;
+	}
+}
+
+/* Returns 0 or an errno; the caller turns a failure into open failure. */
+static int ambient_init(struct fplinux_ui *ui)
+{
+	struct fplinux_ambient_sink sink = { .apply = ambient_apply,
+					     .context = ui };
+	lv_obj_t *root;
+
+	if (ui->ambient)
+		return 0;
+	ui->ambient = fplinux_ambient_create();
+	if (!ui->ambient)
+		return ENOMEM;
+	fplinux_ambient_set_sink(ui->ambient, &sink);
+	root = lv_obj_create(lv_layer_top());
+	if (!root)
+		return ENOMEM;
+	ui->ambient_root = root;
+	lv_obj_remove_style_all(root);
+	lv_obj_set_ignore_layout(root, true);
+	lv_obj_set_clickable(root, false);
+	lv_obj_set_scrollable(root, false);
+	lv_obj_set_style_bg_opa(root, LV_OPA_TRANSP, 0);
+	lv_obj_set_style_border_width(root, 0, 0);
+	lv_obj_set_style_pad_all(root, 0, 0);
+	for (unsigned int zone = 0; zone < FPLINUX_AMBIENT_ZONE_COUNT; ++zone) {
+		/* Halo first so the narrower core is drawn on top of it. */
+		static const unsigned int order[2] = { 1, 0 };
+
+		for (unsigned int index = 0; index < 2; ++index) {
+			unsigned int layer = order[index];
+			lv_obj_t *strip = lv_obj_create(root);
+
+			if (!strip)
+				return ENOMEM;
+			ui->ambient_strips[zone][layer] = strip;
+			lv_obj_remove_style_all(strip);
+			lv_obj_set_ignore_layout(strip, true);
+			lv_obj_set_clickable(strip, false);
+			lv_obj_set_scrollable(strip, false);
+			lv_obj_set_style_radius(strip, 0, 0);
+			lv_obj_set_style_border_width(strip, 0, 0);
+			lv_obj_set_style_bg_opa(strip, LV_OPA_TRANSP, 0);
+		}
+	}
+	ambient_layout(ui);
+	ui->ambient_timer = lv_timer_create(ambient_timer_cb, 40, ui);
+	if (!ui->ambient_timer)
+		return ENOMEM;
+	ui->ambient_enabled = true;
+	fplinux_ambient_tick(ui->ambient, fplinux_ui_now_ms());
+	return 0;
+}
+
+static void ambient_fini(struct fplinux_ui *ui)
+{
+	ui->ambient_enabled = false;
+	if (ui->ambient_timer) {
+		lv_timer_delete(ui->ambient_timer);
+		ui->ambient_timer = NULL;
+	}
+	if (ui->ambient_root) {
+		lv_obj_delete(ui->ambient_root);
+		ui->ambient_root = NULL;
+	}
+	memset(ui->ambient_strips, 0, sizeof(ui->ambient_strips));
+	fplinux_ambient_destroy(ui->ambient);
+	ui->ambient = NULL;
 }
 
 /*
@@ -2409,6 +2617,7 @@ void fplinux_ui_close(struct fplinux_ui *ui)
 	fplinux_ui_screens_delete(ui->screens);
 	ui->screens = NULL;
 	ui->marquee = (struct marquee){ 0 };
+	ambient_fini(ui);
 	if (ui->display)
 		lv_display_delete(ui->display);
 	free(ui->draw_buffer);
@@ -2657,6 +2866,47 @@ int fplinux_ui_height(const struct fplinux_ui *ui)
 const struct fplinux_ui_theme *fplinux_ui_theme(const struct fplinux_ui *ui)
 {
 	return &ui->theme;
+}
+
+bool fplinux_ui_set_ambient_enabled(struct fplinux_ui *ui, bool enabled)
+{
+	int error;
+
+	if (!ui) {
+		errno = EINVAL;
+		return false;
+	}
+	if (!enabled) {
+		ui->ambient_enabled = false;
+		if (ui->ambient_timer)
+			lv_timer_pause(ui->ambient_timer);
+		if (ui->ambient)
+			fplinux_ambient_set_enabled(ui->ambient, false);
+		return true;
+	}
+	if (!ui->ambient) {
+		error = ambient_init(ui);
+		if (error) {
+			ambient_fini(ui);
+			errno = error;
+			return false;
+		}
+	}
+	ui->ambient_enabled = true;
+	fplinux_ambient_set_enabled(ui->ambient, true);
+	if (ui->ambient_timer) {
+		if (ui->visible)
+			lv_timer_resume(ui->ambient_timer);
+		else
+			lv_timer_pause(ui->ambient_timer);
+	}
+	fplinux_ambient_tick(ui->ambient, fplinux_ui_now_ms());
+	return true;
+}
+
+struct fplinux_ambient *fplinux_ui_ambient(struct fplinux_ui *ui)
+{
+	return ui ? ui->ambient : NULL;
 }
 
 const struct fplinux_ui_metrics *fplinux_ui_metrics(const struct fplinux_ui *ui)

@@ -1,8 +1,8 @@
 /* SPDX-License-Identifier: LGPL-2.1-or-later */
 /*
  * The application ABI of libfplinux-ui.so.1: exactly the functions declared
- * in the installed headers fplinux-ui.h, fplinux-ui-screen.h,
- * fplinux-ui-text.h, fplinux-ui-menu.h, fplinux-ui-prefs.h,
+ * in the installed headers fplinux-ui.h, fplinux-ui-ambient.h,
+ * fplinux-ui-screen.h, fplinux-ui-text.h, fplinux-ui-menu.h, fplinux-ui-prefs.h,
  * fplinux-ui-locale.h, fplinux-ui-symbol-picker.h, fplinux-ui-audio.h,
  * fplinux-ui-vibration.h and fplinux-ui-frame.h. A new function is added
  * here and in its header. The library and its current consumers are built
@@ -11,6 +11,19 @@
  */
 {
 global:
+	fplinux_ambient_clear_zones;
+	fplinux_ambient_create;
+	fplinux_ambient_destroy;
+	fplinux_ambient_frame;
+	fplinux_ambient_set_enabled;
+	fplinux_ambient_set_effect;
+	fplinux_ambient_set_scene;
+	fplinux_ambient_set_sink;
+	fplinux_ambient_set_zone;
+	fplinux_ambient_tick;
+	fplinux_ambient_trigger;
+	fplinux_ui_ambient;
+	fplinux_ui_set_ambient_enabled;
 	fplinux_ui_open_file;
 	fplinux_ui_set_storage_handler;
 	fplinux_ui_storage_request;

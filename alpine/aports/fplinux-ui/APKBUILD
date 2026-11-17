@@ -30,8 +30,10 @@ source="
 	@source:aport_notosanssymbols2_ofl_2_008_txt@
 	@source:aport_notosansmath_ofl_3_000_txt@
 	fplinux-ui.c
+	fplinux-ui-ambient.c
 	fplinux-ui-style.c
 	fplinux-ui.h
+	fplinux-ui-ambient.h
 	fplinux-gettext.h
 	fplinux-storage.h
 	fplinux-audio-client.c
@@ -127,7 +129,8 @@ build() {
 	done
 	"$CC" $CPPFLAGS $CFLAGS -Os -std=c11 -Wall -Wextra -Werror -fPIC \
 		-I"$srcdir" $(pkg-config --cflags lvgl wayland-client xkbcommon json-c) \
-		-shared fplinux-ui.c fplinux-ui-style.c fplinux-ui-session.c fplinux-ui-text.c \
+		-shared fplinux-ui.c fplinux-ui-ambient.c fplinux-ui-style.c \
+		fplinux-ui-session.c fplinux-ui-text.c \
 		fplinux-audio-client.c fplinux-ui-frame.c \
 		fplinux-ui-menu.c fplinux-ui-prefs.c fplinux-ui-screen.c \
 		fplinux-ui-locale.c fplinux-ui-symbol-picker.c \
@@ -146,6 +149,8 @@ package() {
 	install -Dm755 libfplinux-ui.so.1 "$pkgdir/usr/lib/libfplinux-ui.so.1"
 	ln -s libfplinux-ui.so.1 "$pkgdir/usr/lib/libfplinux-ui.so"
 	install -Dm644 fplinux-ui.h "$pkgdir/usr/include/fplinux/fplinux-ui.h"
+	install -Dm644 fplinux-ui-ambient.h \
+		"$pkgdir/usr/include/fplinux/fplinux-ui-ambient.h"
 	install -Dm644 fplinux-gettext.h "$pkgdir/usr/include/fplinux/fplinux-gettext.h"
 	install -Dm644 fplinux-storage.h "$pkgdir/usr/include/fplinux/fplinux-storage.h"
 	install -Dm644 fplinux-ui-audio.h \
@@ -195,9 +200,11 @@ package() {
 }
 
 sha512sums="
-045652578be5c4563716395556284b08f14109e108c22fc05786fb459c346e1297dc0c37298d423469ca211cb0e1c12f4227e3e31168ba44f6ba4935dc5d9982  fplinux-ui.c
+d27fcfc9f4dc44663be01ad59b1eecd936695a7d9b53b9adb41664bdf5aae1d1193d7f5260fe1f3c8edffa3d74dfeb8b5a307cf9e4c00cfb949f3035b53ce016  fplinux-ui.c
+4278ed64710ffad43a7bbd5981f38fd25bc05a6dd97be8353d404c41977de9405332935f9017aab3ba5a1386458dc9f5cbe1b8ebc8c69fcc9f75e5c59f428468  fplinux-ui-ambient.c
 2ea0f81ea8fdbe2c17bbbd4062a89fe19508572781a54b456286bdc08a295942d34047dc82e0b16a8c0256de6c70f25ec2e029e89d54ef4eda78534aac36d0c6  fplinux-ui-style.c
 c68e15a29347eaf7f5dbdf8460cd58478e5fb6334f0c5392915449ce0fd0d286beb434602d855177996103e602d1edc3cc4e743ce0893cb9a1eecdbf0ac5aa52  fplinux-ui.h
+2dda8f3281cbd286b5d0e1d43d814de79953bee5099831b91ce052133ce963b6c9a56ae06467524570c59085016834280d0370489f7f642341c26356e31ffaed  fplinux-ui-ambient.h
 483c462166bf90ce3d4b232b27a43e541c76602a9a6f65571fe60b9f9ed72b164ed0cba9ae00457353afa2b48b1b9e83db81dc09cdff00b35ff5ca76411efdf2  fplinux-gettext.h
 c2a1a77ae236231200f2b037f320a513380957aaf44396c9b6fa889e1a6d249324e2b270cef183593134d55d5a3fef36ddce2485d6e759512f4888058d52839b  fplinux-storage.h
 a49464163861393788407942a71dc787debd1697f8bec1c8eeeaa6b3f45e7cf5d76b6530295409108a2dd7b3b972a5a5bdb0a3c5dd2fa7979f069467684fcb1f  fplinux-audio-client.c
@@ -250,7 +257,7 @@ e3e550c2f07726b0f20d49f30300e88c862b3cac031c29b4a89c282719634fea22a5cc6a491c081d
 8faaf9488473bc6f743df4cdf992c9fcdc2b3697c94e0efc759b2a5588d8f57dc128a5bc6ee4636eb7245fc05352e8bb6175e661d758e5c67ecc5ac341f8cbf9  fplinux-text-input.c
 27ff92d1f8be319184ace323a8a21454074909c5bba06139afa6471a9b8d8740975f7f2690bac8d298611cdaf07e8731ffb27db3d30814d8c34dc34465db1610  fplinux-text-input.h
 0f0cdff74f1aba6459c951b510e645c2a517129b92a4b1a234885f1452cccc7ff9045c0f0263d7b3fe79af9fa3b19d5791b5e64e24f11f1ceeb5c6eef338647d  fplinux-ui.pc
-0a4e48a1963f47aad3a2e957609a61afd24012745e3a7097a6116ccf0e8a6919b552511a55fe4b0c80b10fd4a831bcf9bc3941d4c64e6b019a07569a6d614ba3  fplinux-ui.map
+f8f89b3ae8e905b978978362f34479b4c1c9019b561e41f112b1448d79f3c541a48927bf3c9b68f440db38b0681ac215a406cdc4060c14f719498963f04dcd14  fplinux-ui.map
 41d44e9f986505a37bde8706c8272f46613cc3847bf2b986ee9f3c2b51790370de10d16db6258c82a02fca3724cef557268b9ea3f00443ce79fdf898460cdd73  ru.po
 63d998a7e568075385abdf17ce8478588db3a76c9c6e89fce82b87b71dc029b84cd66d4ad2b4b64c1cfb375e4f75851f4a60b8073ed8a76f403c856450b26c88  LGPL-2.1-or-later.txt
 260c02ff0a3e04ff0c2a95a936494b6a114a0a22121557059591d44af5fab5644ab8484be61eb33c12a6c9eef2170a108d51e2972adaef942568d94ae0d4ec83  GPL-2.0-only.txt

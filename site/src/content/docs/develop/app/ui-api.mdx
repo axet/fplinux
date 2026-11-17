@@ -3,6 +3,7 @@ title: UI runtime reference
 description: Find the installed application interfaces and their ownership, event-loop and resource contracts.
 source:
   - include/fplinux/fplinux-ui.h
+  - include/fplinux/fplinux-ui-ambient.h
   - include/fplinux/fplinux-ui-menu.h
   - include/fplinux/fplinux-ui-frame.h
   - include/fplinux/fplinux-ui-audio.h
@@ -16,6 +17,7 @@ Include the installed headers under `fplinux/` and link with `pkg-config --cflag
 | Header | Use |
 | --- | --- |
 | `fplinux-ui.h` | Runtime, events, geometry, theme, glyphs, images and session actions |
+| `fplinux-ui-ambient.h` | Semantic edge-light scenes and transient accents |
 | `fplinux-ui-screen.h` | Screens, commands, stack navigation, forms and Canvas |
 | `fplinux-ui-text.h` | Shared text field in a custom screen |
 | `fplinux-ui-menu.h` | A low-level popup menu for custom content |
@@ -61,6 +63,14 @@ After a geometry change, call `fplinux_ui_frame_resize()`, obtain the pixels aga
 `fplinux_ui_frame_object()` returns a borrowed canvas. You may position or reparent it inside the UI, but must not delete it directly. Deleting its parent or closing the UI deletes the canvas and detaches its timer; the frame handle and buffers still need `fplinux_ui_frame_delete()`.
 
 `fplinux_ui_frame_set_timer()` borrows an application-owned timer and pauses or resumes it according to UI visibility and the enabled flag. Detach that timer before deleting it. Covering a particular application screen is not the same as hiding the entire UI: disable work for an inactive Canvas explicitly. API Demos contains a complete software-frame consumer with resize and cleanup.
+
+## Ambient accents
+
+Ambient accents are off by default. Call `fplinux_ui_set_ambient_enabled(ui, true)` when an application wants them, then use `fplinux_ui_ambient(ui)` to reach the runtime's shared engine. It paints thin, translucent strips on the LVGL top layer, so the accents remain visible across screens without changing application layouts. This is a software UI effect: it does not control the display backlight, keypad light or a hardware ambient LED. Passing `false` pauses the renderer without discarding the current scene.
+
+Call `fplinux_ambient_set_scene()` for the application's persistent mood, then `fplinux_ambient_trigger()` for bounded events such as a notification or an incoming call. Scenes carry a priority, so a higher-priority trigger replaces a lower one and a lower-priority trigger is ignored while the current one has time left. The runtime already moves between the idle and active scenes on activation and foreground events; applications only name the semantic scene they need.
+
+The engine cross-fades colours and runs the scene's effect from the UI's timer. It does not add another polling loop. `fplinux_ambient_set_zone()` and `fplinux_ambient_set_effect()` are the escape hatches for custom colours and motion; prefer a named scene when one fits. Keep effects subtle on small displays: the strips sit above content, and their purpose is orientation, not information that must be read.
 
 ## Sound
 

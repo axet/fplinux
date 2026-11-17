@@ -54,6 +54,7 @@ def client_frames(
     executable = directory / "client-frames"
     sources = [
         "fplinux-ui.c",
+        "fplinux-ui-ambient.c",
         "fplinux-ui-style.c",
         "fplinux-audio-client.c",
         "fplinux-ui-frame.c",
