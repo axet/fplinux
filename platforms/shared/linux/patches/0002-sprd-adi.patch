@@ -20,7 +20,7 @@ diff --git a/drivers/spi/Kconfig b/drivers/spi/Kconfig
 diff --git a/drivers/spi/spi-sprd-adi.c b/drivers/spi/spi-sprd-adi.c
 --- a/drivers/spi/spi-sprd-adi.c
 +++ b/drivers/spi/spi-sprd-adi.c
-@@ -5,15 +5,19 @@
+@@ -5,16 +5,22 @@
   */
  
  #include <linux/delay.h>
@@ -29,6 +29,7 @@ diff --git a/drivers/spi/spi-sprd-adi.c b/drivers/spi/spi-sprd-adi.c
  #include <linux/init.h>
  #include <linux/io.h>
 +#include <linux/iopoll.h>
++#include <linux/kobject.h>
  #include <linux/kernel.h>
 +#include <linux/limits.h>
  #include <linux/module.h>
@@ -38,9 +39,11 @@ diff --git a/drivers/spi/spi-sprd-adi.c b/drivers/spi/spi-sprd-adi.c
  #include <linux/spi/spi.h>
 +#include <linux/spi/sprd-adi.h>
  #include <linux/sizes.h>
++#include <linux/sysfs.h>
  
  /* Registers definitions for ADI controller */
-@@ -34,7 +38,12 @@
+ #define REG_ADI_CTRL0			0x4
+@@ -34,7 +40,12 @@
  #define REG_ADI_ARM_CMD_STS		0x3c
  #define REG_ADI_CHN_EN			0x40
  #define REG_ADI_CHN_ADDR(id)		(0x44 + (id - 2) * 4)
@@ -54,7 +57,7 @@ diff --git a/drivers/spi/spi-sprd-adi.c b/drivers/spi/spi-sprd-adi.c
  
  /* Bits definitions for register REG_ADI_GSSI_CFG0 */
  #define BIT_CLK_ALL_ON			BIT(30)
-@@ -137,9 +146,11 @@
+@@ -137,9 +148,11 @@
  struct sprd_adi_data {
  	u32 slave_offset;
  	u32 slave_addr_size;
@@ -66,7 +69,7 @@ diff --git a/drivers/spi/spi-sprd-adi.c b/drivers/spi/spi-sprd-adi.c
  };
  
  struct sprd_adi {
-@@ -150,11 +161,68 @@
+@@ -150,11 +163,68 @@
  	unsigned long		slave_vbase;
  	unsigned long		slave_pbase;
  	const struct sprd_adi_data *data;
@@ -136,7 +139,7 @@ diff --git a/drivers/spi/spi-sprd-adi.c b/drivers/spi/spi-sprd-adi.c
  		dev_err(sadi->dev,
  			"slave address offset is incorrect, reg = 0x%x\n",
  			reg);
-@@ -174,7 +242,10 @@
+@@ -174,7 +244,10 @@
  		if (sts & BIT_FIFO_EMPTY)
  			break;
  
@@ -148,7 +151,7 @@ diff --git a/drivers/spi/spi-sprd-adi.c b/drivers/spi/spi-sprd-adi.c
  	} while (--timeout);
  
  	if (timeout == 0) {
-@@ -214,11 +285,16 @@
+@@ -214,11 +287,16 @@
  	return sprd_adi_read_check(val, (reg & RDBACK_ADDR_MASK_R3) >> RDBACK_ADDR_SHIFT_R3);
  }
  
@@ -166,7 +169,7 @@ diff --git a/drivers/spi/spi-sprd-adi.c b/drivers/spi/spi-sprd-adi.c
  	int ret = 0;
  
  	if (sadi->hwlock) {
-@@ -239,7 +315,8 @@
+@@ -239,7 +317,8 @@
  	 * Set the slave address offset need to read into RD_CMD register,
  	 * then ADI controller will start to transfer automatically.
  	 */
@@ -176,7 +179,7 @@ diff --git a/drivers/spi/spi-sprd-adi.c b/drivers/spi/spi-sprd-adi.c
  
  	/*
  	 * Wait read operation complete, the BIT_RD_CMD_BUSY will be set
-@@ -268,7 +345,7 @@
+@@ -268,7 +347,7 @@
  	 * address to validate data.
  	 */
  	if (sadi->data->read_check) {
@@ -185,7 +188,7 @@ diff --git a/drivers/spi/spi-sprd-adi.c b/drivers/spi/spi-sprd-adi.c
  		if (ret < 0)
  			goto out;
  	}
-@@ -335,13 +412,22 @@
+@@ -335,13 +414,22 @@
  				 struct spi_transfer *t)
  {
  	struct sprd_adi *sadi = spi_controller_get_devdata(ctlr);
@@ -209,7 +212,7 @@ diff --git a/drivers/spi/spi-sprd-adi.c b/drivers/spi/spi-sprd-adi.c
  	} else if (t->tx_buf) {
  		u32 *p = (u32 *)t->tx_buf;
  		reg = *p++;
-@@ -352,9 +438,52 @@
+@@ -352,9 +440,52 @@
  		ret = -EINVAL;
  	}
  
@@ -262,7 +265,7 @@ diff --git a/drivers/spi/spi-sprd-adi.c b/drivers/spi/spi-sprd-adi.c
  static void sprd_adi_set_wdt_rst_mode(void *p)
  {
  #if IS_ENABLED(CONFIG_SPRD_WATCHDOG)
-@@ -456,6 +585,145 @@
+@@ -456,6 +587,170 @@
  	return sprd_adi_restart(data->cb_data, data->mode, data->cmd, &wdg);
  }
  
@@ -405,10 +408,35 @@ diff --git a/drivers/spi/spi-sprd-adi.c b/drivers/spi/spi-sprd-adi.c
 +	unregister_reboot_notifier(&sadi->bootrom_nb);
 +}
 +
++/* Direct trigger: no reboot notifiers, no device_shutdown(), no long freeze. */
++static struct kobject *bootrom_kobj;
++static struct sprd_adi *bootrom_sadi;
++
++static ssize_t bootrom_store(struct kobject *kobj, struct kobj_attribute *attr,
++			     const char *buf, size_t count)
++{
++	struct sprd_adi *sadi = bootrom_sadi;
++
++	if (!sadi || !count)
++		return -ENODEV;
++	sadi->bootrom_armed = true;
++	sprd_adi_arm_bootrom_reset(sadi, "autodloader");
++	return count;
++}
++static struct kobj_attribute bootrom_attr = __ATTR_WO(bootrom);
++
++static void sprd_adi_remove_bootrom_sysfs(void *data)
++{
++	sysfs_remove_file(bootrom_kobj, &bootrom_attr.attr);
++	kobject_put(bootrom_kobj);
++	bootrom_kobj = NULL;
++	bootrom_sadi = NULL;
++}
++
  static void sprd_adi_hw_init(struct sprd_adi *sadi)
  {
  	struct device_node *np = sadi->dev->of_node;
-@@ -463,6 +731,9 @@
+@@ -463,6 +758,9 @@
  	const __be32 *list;
  	u32 tmp;
  
@@ -418,7 +446,7 @@ diff --git a/drivers/spi/spi-sprd-adi.c b/drivers/spi/spi-sprd-adi.c
  	/* Set all channels as default priority */
  	writel_relaxed(0, sadi->base + REG_ADI_CHN_PRIL);
  	writel_relaxed(0, sadi->base + REG_ADI_CHN_PRIH);
-@@ -539,19 +810,70 @@
+@@ -539,19 +837,86 @@
  	if (IS_ERR(sadi->base))
  		return PTR_ERR(sadi->base);
  
@@ -450,6 +478,22 @@ diff --git a/drivers/spi/spi-sprd-adi.c b/drivers/spi/spi-sprd-adi.c
 +		ret = devm_add_action_or_reset(
 +			&pdev->dev, sprd_adi_unregister_bootrom_notifier,
 +			sadi);
++		if (ret)
++			return ret;
++
++		bootrom_sadi = sadi;
++		bootrom_kobj = kobject_create_and_add("sprd_adi", kernel_kobj);
++		if (!bootrom_kobj)
++			return -ENOMEM;
++		ret = sysfs_create_file(bootrom_kobj, &bootrom_attr.attr);
++		if (ret) {
++			kobject_put(bootrom_kobj);
++			bootrom_kobj = NULL;
++			bootrom_sadi = NULL;
++			return ret;
++		}
++		ret = devm_add_action_or_reset(
++			&pdev->dev, sprd_adi_remove_bootrom_sysfs, sadi);
 +		if (ret)
 +			return ret;
 +
@@ -489,7 +533,7 @@ diff --git a/drivers/spi/spi-sprd-adi.c b/drivers/spi/spi-sprd-adi.c
  		switch (ret) {
  		case 0:
  			/*
-@@ -593,6 +915,13 @@
+@@ -593,6 +958,13 @@
  	return 0;
  }
  
@@ -503,7 +547,7 @@ diff --git a/drivers/spi/spi-sprd-adi.c b/drivers/spi/spi-sprd-adi.c
  static struct sprd_adi_data sc9860_data = {
  	.slave_offset = ADI_10BIT_SLAVE_OFFSET,
  	.slave_addr_size = ADI_10BIT_SLAVE_ADDR_SIZE,
-@@ -601,6 +930,14 @@
+@@ -601,6 +973,14 @@
  	.wdg_rst = sprd_adi_set_wdt_rst_mode,
  };
  
@@ -518,7 +562,7 @@ diff --git a/drivers/spi/spi-sprd-adi.c b/drivers/spi/spi-sprd-adi.c
  static struct sprd_adi_data sc9863_data = {
  	.slave_offset = ADI_12BIT_SLAVE_OFFSET,
  	.slave_addr_size = ADI_12BIT_SLAVE_ADDR_SIZE,
-@@ -615,6 +952,14 @@
+@@ -615,6 +995,14 @@
  
  static const struct of_device_id sprd_adi_of_match[] = {
  	{
@@ -533,7 +577,7 @@ diff --git a/drivers/spi/spi-sprd-adi.c b/drivers/spi/spi-sprd-adi.c
  		.compatible = "sprd,sc9860-adi",
  		.data = &sc9860_data,
  	},
-@@ -626,7 +971,7 @@
+@@ -626,7 +1014,7 @@
  		.compatible = "sprd,ums512-adi",
  		.data = &ums512_data,
  	},

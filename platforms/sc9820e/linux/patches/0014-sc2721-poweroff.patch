@@ -6,10 +6,10 @@ diff --git a/drivers/spi/spi-sprd-adi.c b/drivers/spi/spi-sprd-adi.c
  #include <linux/io.h>
  #include <linux/iopoll.h>
 +#include <linux/irqflags.h>
+ #include <linux/kobject.h>
  #include <linux/kernel.h>
  #include <linux/limits.h>
- #include <linux/module.h>
-@@ -115,6 +116,16 @@
+@@ -117,6 +118,16 @@
  #define PMIC_CLK_EN			0xc18
  #define PMIC_WDG_BASE			0x80
  
@@ -26,7 +26,7 @@ diff --git a/drivers/spi/spi-sprd-adi.c b/drivers/spi/spi-sprd-adi.c
  /* Definition of PMIC reset status register */
  #define HWRST_STATUS_SECURITY		0x02
  #define HWRST_STATUS_RECOVERY		0x20
-@@ -290,23 +301,12 @@
+@@ -292,23 +303,12 @@
  	return sprd_adi_read_check(val, (physical_addr & 0xffff) >> 2);
  }
  
@@ -51,7 +51,7 @@ diff --git a/drivers/spi/spi-sprd-adi.c b/drivers/spi/spi-sprd-adi.c
  	ret = sprd_adi_check_addr(sadi, reg);
  	if (ret)
  		goto out;
-@@ -353,14 +353,11 @@
+@@ -355,14 +355,11 @@
  	*read_val = val & RD_VALUE_MASK;
  
  out:
@@ -67,7 +67,7 @@ diff --git a/drivers/spi/spi-sprd-adi.c b/drivers/spi/spi-sprd-adi.c
  	unsigned long flags;
  	int ret;
  
-@@ -374,6 +371,17 @@
+@@ -376,6 +373,17 @@
  		}
  	}
  
@@ -85,7 +85,7 @@ diff --git a/drivers/spi/spi-sprd-adi.c b/drivers/spi/spi-sprd-adi.c
  	ret = sprd_adi_check_addr(sadi, reg);
  	if (ret)
  		goto out;
-@@ -402,6 +410,24 @@
+@@ -404,6 +412,24 @@
  	}
  
  out:
@@ -110,7 +110,7 @@ diff --git a/drivers/spi/spi-sprd-adi.c b/drivers/spi/spi-sprd-adi.c
  	if (sadi->hwlock)
  		hwspin_unlock_irqrestore(sadi->hwlock, &flags);
  	return ret;
-@@ -484,6 +510,60 @@
+@@ -486,6 +512,60 @@
  }
  EXPORT_SYMBOL_GPL(sprd_adi_sc2720_power_off);
  
