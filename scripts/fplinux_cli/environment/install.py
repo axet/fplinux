@@ -51,6 +51,7 @@ def _extract_archive(
             "tar",
             "--warning=no-unknown-keyword",
             "--extract",
+            "--no-same-owner",
             "--file",
             archive,
             "--directory",
@@ -62,6 +63,23 @@ def _extract_archive(
     )
 
 
+def _apk_add(selectors: Sequence[str]) -> None:
+    """Install APK packages, tolerating unmapped setuid ownership warnings."""
+
+    command = ["apk", "add", "--no-network", "--no-cache", *selectors]
+    result = subprocess.run(command, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    if result.stdout:
+        print(result.stdout, end="")
+    if result.returncode == 0:
+        return
+    lines = result.stdout.splitlines()
+    warnings = [line for line in lines if line.startswith("WARNING:")]
+    fatal_errors = [line for line in lines if "ERROR:" in line or "error:" in line]
+    if result.returncode != 2 or not warnings or fatal_errors:
+        raise subprocess.CalledProcessError(result.returncode, command, output=result.stdout)
+    print("ignoring non-fatal APK ownership warnings", file=sys.stderr)
+
+
 def _prepare_system(declarations: dict[str, Any]) -> None:
     repositories = dict.fromkeys(
         record["url"].rsplit("/", 2)[0]
@@ -70,7 +88,7 @@ def _prepare_system(declarations: dict[str, Any]) -> None:
     )
     Path("/etc/apk/repositories").write_text("\n".join(repositories) + "\n", encoding="utf-8")
     selectors = [package for group in declarations["selection"]["apk_groups"] for package in group]
-    subprocess.run(["apk", "add", "--no-network", "--no-cache", *selectors], check=True)
+    _apk_add(selectors)
     subprocess.run(["adduser", "-D", "-u", "1000", "builder"], check=True)
     subprocess.run(["addgroup", "builder", "abuild"], check=True)
 

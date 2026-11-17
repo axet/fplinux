@@ -11,9 +11,12 @@ stage_aport=$stage_root/alpine/aports/$package
 
 chmod 755 "$stage_root" "$stage_root/alpine" "$stage_root/alpine/aports"
 install -d "$source_cache"
-restore_ownership() {
-	chown -R 0:0 "$stage_aport" "$source_cache"
-}
-trap restore_ownership EXIT HUP INT TERM
-chown -R builder:builder "$stage_aport" "$source_cache"
-su builder -s /bin/sh -- "$stage_root/checksum/builder.sh" "$source_cache" "$checksum_epoch"
+
+# Kern exposes host directories through virtiofs, which cannot change inode
+# ownership from inside the box.  Run the checksum step as the sandbox root
+# instead of dropping to builder; abuild's -F flag permits that explicitly.
+export SRCDEST=$source_cache
+export SOURCE_DATE_EPOCH=$checksum_epoch
+cd "$stage_aport"
+abuild -F checksum
+apkbuild-lint APKBUILD

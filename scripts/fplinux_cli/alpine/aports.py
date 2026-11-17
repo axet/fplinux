@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import errno
 import os
 import pwd
 import shlex
@@ -38,7 +39,42 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
 
 
+_BUILDER_OWNERSHIP_SUPPORTED: bool | None = None
+
+
+def _builder_ownership_supported(path: Path) -> bool:
+    """Report whether this mount lets the sandbox change files to builder ownership.
+
+    Kern exposes host directories through virtiofs when it runs on this workspace.
+    That filesystem refuses ``chown`` with EINVAL, so the package build has to run
+    as the sandbox root with ``abuild -F`` instead of dropping to the builder
+    account.  Probe once close to the real target so ordinary filesystems keep
+    the original non-root build path.
+    """
+
+    global _BUILDER_OWNERSHIP_SUPPORTED  # noqa: PLW0603 -- one cached filesystem probe.
+    if _BUILDER_OWNERSHIP_SUPPORTED is not None:
+        return _BUILDER_OWNERSHIP_SUPPORTED
+    account = pwd.getpwnam("builder")
+    probe = path / f".fplinux-ownership-probe-{os.getpid()}"
+    try:
+        probe.touch(exist_ok=False)
+        os.chown(probe, account.pw_uid, account.pw_gid)
+    except OSError as error:
+        if error.errno not in (errno.EINVAL, errno.EPERM, errno.ENOSYS):
+            raise
+        _BUILDER_OWNERSHIP_SUPPORTED = False
+        log_message("mount cannot change ownership; using root abuild fallback")
+    else:
+        _BUILDER_OWNERSHIP_SUPPORTED = True
+    finally:
+        probe.unlink(missing_ok=True)
+    return _BUILDER_OWNERSHIP_SUPPORTED
+
+
 def _chown_tree(path: Path, user: str) -> None:
+    if not _builder_ownership_supported(path):
+        return
     account = pwd.getpwnam(user)
     paths = [path, *sorted(path.rglob("*"))]
     for candidate in paths:
@@ -46,6 +82,21 @@ def _chown_tree(path: Path, user: str) -> None:
 
 
 def _builder_command(command: list[str], environment: dict[str, str]) -> list[str]:
+    if _BUILDER_OWNERSHIP_SUPPORTED is None:
+        _builder_ownership_supported(Path.cwd())
+    if not _BUILDER_OWNERSHIP_SUPPORTED:
+        # abuild refuses root unless -F is present; the other tools are happy.
+        if command and command[0] == "abuild":
+            command = ["abuild", "-F", *command[1:]]
+        # Source archives carry upstream UIDs that virtiofs cannot restore.
+        # GNU tar honours TAR_OPTIONS for every extraction abuild performs.
+        environment = dict(environment)
+        tar_options = environment.get("TAR_OPTIONS", "").split()
+        if "--no-same-owner" not in tar_options:
+            tar_options.append("--no-same-owner")
+        environment["TAR_OPTIONS"] = " ".join(tar_options)
+        assignments = [f"{key}={value}" for key, value in sorted(environment.items())]
+        return ["env", *assignments, *command]
     assignments = [f"{key}={value}" for key, value in sorted(environment.items())]
     shell_command = "exec env " + " ".join(shlex.quote(part) for part in [*assignments, *command])
     return ["su", "builder", "-s", "/bin/sh", "-c", shell_command]

@@ -3,8 +3,10 @@
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from fplinux_cli.common import ROOT
@@ -20,7 +22,6 @@ from .profiles import profile_cache_entries, profile_check_receipt_entries
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
-    from pathlib import Path
 
 
 def prune(
@@ -40,6 +41,36 @@ def apply_prune(cache: Path) -> PruneApplyResult:
     return _remove_candidates(cache, plan.candidates)
 
 
+def _has_foreign_owner(root: Path) -> bool:
+    """Report any inode in the tree owned by a UID other than the caller's."""
+    uid = os.geteuid()
+    if root.lstat().st_uid != uid:
+        return True
+    for directory, directories, files in os.walk(root, followlinks=False):
+        for name in [*directories, *files]:
+            if (Path(directory) / name).lstat().st_uid != uid:
+                return True
+    return False
+
+
+def _remove_with_namespace(destination: Path) -> None:
+    """Remove a directory owned by the mapped build user through a subordinate namespace."""
+    subprocess.run(
+        [
+            "unshare",
+            "--map-auto",
+            "--map-root-user",
+            "--",
+            "rm",
+            "--recursive",
+            "--force",
+            "--",
+            str(destination),
+        ],
+        check=True,
+    )
+
+
 def _remove_candidates(cache: Path, entries: Sequence[InventoryEntry]) -> PruneApplyResult:
     """Remove selected managed directories and retain their planned size totals."""
     removed: list[str] = []
@@ -50,24 +81,20 @@ def _remove_candidates(cache: Path, entries: Sequence[InventoryEntry]) -> PruneA
             continue
         destination = managed_candidate_directory(cache, entry.path)
         try:
-            shutil.rmtree(destination)
-        except PermissionError:
-            # Container build users can own private directories in abandoned work trees.
-            destination = managed_candidate_directory(cache, entry.path)
-            subprocess.run(
-                [
-                    "unshare",
-                    "--map-auto",
-                    "--map-root-user",
-                    "--",
-                    "rm",
-                    "--recursive",
-                    "--force",
-                    "--",
-                    str(destination),
-                ],
-                check=True,
-            )
+            foreign_owner = _has_foreign_owner(destination)
+        except FileNotFoundError:
+            foreign_owner = False
+        if foreign_owner and shutil.which("unshare"):
+            # Container build users own private directories in abandoned work
+            # trees. A privileged host can delete them without a namespace,
+            # but doing so silently would hide a broken namespace from the
+            # caller and leave the mapped owner unconstrained.
+            _remove_with_namespace(destination)
+        else:
+            try:
+                shutil.rmtree(destination)
+            except PermissionError:
+                _remove_with_namespace(destination)
         removed.append(entry.path)
         logical += entry.logical_bytes or 0
         allocated += entry.allocated_bytes or 0

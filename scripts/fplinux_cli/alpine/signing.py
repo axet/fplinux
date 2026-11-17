@@ -12,7 +12,7 @@ from pathlib import Path
 from fplinux_cli.build.inputs import CACHE
 from fplinux_cli.common import fail, sha256_file
 
-from .aports import _run_as_builder
+from .aports import _builder_ownership_supported, _run_as_builder
 
 SIGNING_KEY_DIRECTORY = "apk-signing"
 SIGNING_PRIVATE_KEY = "fplinux-build.rsa"
@@ -38,7 +38,9 @@ def _ensure_apk_signing_key() -> tuple[Path, Path, str]:
     if directory.is_symlink() or not directory.is_dir():
         fail(f"APK signing state directory is invalid: {directory}")
     temporary_home = Path(tempfile.mkdtemp(dir=directory, prefix=".keygen-"))
-    os.chown(temporary_home, account.pw_uid, account.pw_gid)
+    ownership_supported = _builder_ownership_supported(temporary_home)
+    if ownership_supported:
+        os.chown(temporary_home, account.pw_uid, account.pw_gid)
     try:
         _run_as_builder(
             ["abuild-keygen", "-n"],
@@ -53,8 +55,9 @@ def _ensure_apk_signing_key() -> tuple[Path, Path, str]:
         shutil.copyfile(generated_public[0], public_key)
         private_key.chmod(0o600)
         public_key.chmod(0o644)
-        os.chown(private_key, account.pw_uid, account.pw_gid)
-        os.chown(public_key, account.pw_uid, account.pw_gid)
+        if ownership_supported:
+            os.chown(private_key, account.pw_uid, account.pw_gid)
+            os.chown(public_key, account.pw_uid, account.pw_gid)
     finally:
         shutil.rmtree(temporary_home)
     return private_key, public_key, sha256_file(public_key)
