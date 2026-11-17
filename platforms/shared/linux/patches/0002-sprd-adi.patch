@@ -261,6 +261,115 @@ index a6baaf0..3caa38c 100644
  static void sprd_adi_set_wdt_rst_mode(void *p)
  {
  #if IS_ENABLED(CONFIG_SPRD_WATCHDOG)
+@@ -460,6 +582,108 @@ static int sprd_adi_restart_sc9860(struct sys_off_data *data)
+ 	return sprd_adi_restart(data->cb_data, data->mode, data->cmd, &wdg);
+ }
+ 
++/*
++ * Reboot straight into the BootROM download mode.  The stock key sequence is
++ * only one way to enter it: the BootROM also checks PMIC_RST_STATUS after a
++ * full PMIC watchdog reset.  HWRST_STATUS_AUTODLOADER is that reset reason.
++ *
++ * UMS9117's PMIC watchdog is at base 0x40, not the sc9860 0x80 used by the
++ * generic restart helper, and the clocks are 0xc08/0xc10 (see fdl/src/entry.c
++ * and fdl/src/main.c).  Everything runs under the ADI user lock because the
++ * final sys-off notifier must not sleep in the SPI message queue.
++ */
++static int sprd_adi_restart_ums9117(struct sys_off_data *data)
++{
++#define UMS9117_PMIC_RST_STATUS	0xee8U
++#define UMS9117_PMIC_MODULE_EN	0xc08U
++#define UMS9117_PMIC_RTC_EN	0xc10U
++#define UMS9117_WDG_BASE	0x40U
++#define UMS9117_WDG_UNLOCK	0xe551U
++#define UMS9117_WDG_LOCKED	0x1aaeU
++#define UMS9117_WDG_TIMEOUT	32768U
++	struct sprd_adi *sadi = data->cb_data;
++	unsigned long flags;
++	u32 value;
++	int ret;
++	int end_ret;
++
++	if (!data->cmd || (strncmp(data->cmd, "autodloader", 11) &&
++			   strncmp(data->cmd, "bootrom", 7)))
++		return NOTIFY_DONE;
++	if (!sadi->data->user_lock)
++		return -EOPNOTSUPP;
++
++	ret = sprd_adi_user_lock(sadi, &flags);
++	if (ret)
++		return ret;
++
++	/* Clear the normal/watchdog reset reason and request download mode. */
++	ret = sprd_adi_read(sadi, UMS9117_PMIC_RST_STATUS, &value);
++	if (!ret) {
++		value &= ~HWRST_STATUS_WATCHDOG;
++		value |= HWRST_STATUS_AUTODLOADER;
++		ret = sprd_adi_write(sadi, UMS9117_PMIC_RST_STATUS, value);
++	}
++
++	/* The PMIC watchdog clocks are bit 2 on UMS9117/SC2720. */
++	if (!ret)
++		ret = sprd_adi_read(sadi, UMS9117_PMIC_MODULE_EN, &value);
++	if (!ret)
++		ret = sprd_adi_write(sadi, UMS9117_PMIC_MODULE_EN,
++				     value | BIT_WDG_EN);
++	if (!ret)
++		ret = sprd_adi_read(sadi, UMS9117_PMIC_RTC_EN, &value);
++	if (!ret)
++		ret = sprd_adi_write(sadi, UMS9117_PMIC_RTC_EN,
++				     value | BIT_WDG_EN);
++
++	/* Follow the proven FDL2 reset sequence. */
++	if (!ret)
++		ret = sprd_adi_write(sadi, UMS9117_WDG_BASE + REG_WDG_LOCK,
++				     UMS9117_WDG_UNLOCK);
++	if (!ret)
++		ret = sprd_adi_read(sadi, UMS9117_WDG_BASE + REG_WDG_CTRL,
++				    &value);
++	if (!ret)
++		ret = sprd_adi_write(sadi, UMS9117_WDG_BASE + REG_WDG_CTRL,
++				     value | BIT_WDG_RST);
++	if (!ret)
++		ret = sprd_adi_read(sadi, UMS9117_WDG_BASE + REG_WDG_CTRL,
++				    &value);
++	if (!ret)
++		ret = sprd_adi_write(sadi, UMS9117_WDG_BASE + REG_WDG_CTRL,
++				     value | BIT_WDG_NEW);
++	if (!ret)
++		ret = sprd_adi_write(sadi, UMS9117_WDG_BASE + REG_WDG_LOAD_HIGH,
++				     (UMS9117_WDG_TIMEOUT >> 16) & 0xffff);
++	if (!ret)
++		ret = sprd_adi_write(sadi, UMS9117_WDG_BASE + REG_WDG_LOAD_LOW,
++				     UMS9117_WDG_TIMEOUT & 0xffff);
++	if (!ret)
++		ret = sprd_adi_read(sadi, UMS9117_WDG_BASE + REG_WDG_CTRL,
++				    &value);
++	if (!ret)
++		ret = sprd_adi_write(sadi, UMS9117_WDG_BASE + REG_WDG_CTRL,
++				     value | BIT_WDG_RUN);
++	if (!ret)
++		ret = sprd_adi_drain_fifo(sadi);
++	if (!ret)
++		ret = sprd_adi_write(sadi, UMS9117_WDG_BASE + REG_WDG_LOCK,
++				     UMS9117_WDG_LOCKED);
++
++	end_ret = sprd_adi_user_unlock(sadi, flags);
++	if (!ret)
++		ret = end_ret;
++	if (ret)
++		dev_emerg(sadi->dev, "BootROM reboot failed: %d\n", ret);
++	else
++		dev_emerg(sadi->dev, "Rebooting into BootROM download mode\n");
++
++	/* One second at 32.768 kHz; give USB and the PMIC time to reset. */
++	mdelay(1500);
++	return NOTIFY_DONE;
++}
++
+ static void sprd_adi_hw_init(struct sprd_adi *sadi)
+ {
+ 	struct device_node *np = sadi->dev->of_node;
 @@ -463,6 +585,9 @@ static void sprd_adi_hw_init(struct sprd_adi *sadi)
  	const __be32 *list;
  	u32 tmp;
@@ -342,7 +451,7 @@ index a6baaf0..3caa38c 100644
  static struct sprd_adi_data sc9860_data = {
  	.slave_offset = ADI_10BIT_SLAVE_OFFSET,
  	.slave_addr_size = ADI_10BIT_SLAVE_ADDR_SIZE,
-@@ -601,6 +770,13 @@ static struct sprd_adi_data sc9860_data = {
+@@ -601,6 +770,14 @@ static struct sprd_adi_data sc9860_data = {
  	.wdg_rst = sprd_adi_set_wdt_rst_mode,
  };
 
@@ -350,6 +459,7 @@ index a6baaf0..3caa38c 100644
 +	.slave_offset = ADI_10BIT_SLAVE_OFFSET,
 +	.slave_addr_size = ADI_10BIT_SLAVE_ADDR_SIZE,
 +	.read_check = sprd_adi_read_check_r3,
++	.restart = sprd_adi_restart_ums9117,
 +	.user_lock = true,
 +};
 +
