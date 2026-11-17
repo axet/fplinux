@@ -4,7 +4,8 @@ config POWER_RESET_SC2720_UMS9117
 	depends on ARCH_UMS9117 && INPUT && KEYBOARD_UMS9117
 	depends on MFD_SC27XX_PMIC && SPI_SPRD_ADI
 	help
-	  Request SC2720 power-off after an orderly system shutdown. Refuse
-	  the final power-off sequence while the charger input is active.
-	  A five-second hold of the selected physical power key requests an
-	  orderly userspace shutdown without forcing power loss on failure.
+	  Request SC2720 power-off after an orderly system shutdown. The
+	  final PMIC sequence runs even when USB/charger input is active, so
+	  shutdown over the USB gadget works. A five-second hold of the
+	  selected physical power key requests an orderly userspace shutdown
+	  without forcing power loss on failure.

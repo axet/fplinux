@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-only
 #include <linux/atomic.h>
-#include <linux/bitops.h>
 #include <linux/delay.h>
 #include <linux/err.h>
 #include <linux/input/ums9117-keypad.h>
@@ -19,10 +18,8 @@
 
 #define SC2720_CHIP_ID_LOW 0xc00U
 #define SC2720_CHIP_ID_HIGH 0xc04U
-#define SC2720_CHGR_STATUS 0xe14U
 #define SC2720_EXPECTED_ID_LOW 0xa003U
 #define SC2720_EXPECTED_ID_HIGH 0x2720U
-#define SC2720_CHGR_STATUS_CHARGER_ON BIT(3)
 #define SC2720_POWER_OFF_WAIT_MS 50U
 #define SC2720_POWER_KEY_HOLD_MS 5000U
 
@@ -43,13 +40,11 @@ static void __noreturn sc2720_halt(void)
 }
 
 static int sc2720_read_pmic_state(struct sc2720_poweroff *poweroff,
-				  unsigned int *id_low, unsigned int *id_high,
-				  unsigned int *charger)
+				  unsigned int *id_low, unsigned int *id_high)
 {
 	static const unsigned int regs[] = {
 		SC2720_CHIP_ID_LOW,
 		SC2720_CHIP_ID_HIGH,
-		SC2720_CHGR_STATUS,
 	};
 	unsigned int values[ARRAY_SIZE(regs)];
 	int ret;
@@ -60,8 +55,6 @@ static int sc2720_read_pmic_state(struct sc2720_poweroff *poweroff,
 		return ret;
 	*id_low = values[0];
 	*id_high = values[1];
-	if (charger)
-		*charger = values[2];
 	return 0;
 }
 
@@ -69,16 +62,15 @@ static int sc2720_power_key_preflight(struct sc2720_poweroff *poweroff)
 {
 	unsigned int id_low;
 	unsigned int id_high;
-	unsigned int charger;
 	int ret;
 
-	ret = sc2720_read_pmic_state(poweroff, &id_low, &id_high, &charger);
+	ret = sc2720_read_pmic_state(poweroff, &id_low, &id_high);
 	if (ret)
 		return ret;
 	if (id_low != SC2720_EXPECTED_ID_LOW ||
 	    id_high != SC2720_EXPECTED_ID_HIGH)
 		return -ENODEV;
-	return charger & SC2720_CHGR_STATUS_CHARGER_ON ? -EBUSY : 0;
+	return 0;
 }
 
 static void sc2720_power_key_hold_work(struct work_struct *work)
@@ -92,11 +84,6 @@ static void sc2720_power_key_hold_work(struct work_struct *work)
 		return;
 
 	ret = sc2720_power_key_preflight(poweroff);
-	if (ret == -EBUSY) {
-		dev_warn(poweroff->dev,
-			 "power-key shutdown refused: charger input active\n");
-		return;
-	}
 	if (ret) {
 		dev_err(poweroff->dev, "power-key shutdown refused: %pe\n",
 			ERR_PTR(ret));
@@ -187,7 +174,7 @@ static int sc2720_poweroff_probe(struct platform_device *pdev)
 				       poweroff->keypad_node);
 	if (ret)
 		return ret;
-	ret = sc2720_read_pmic_state(poweroff, &id_low, &id_high, NULL);
+	ret = sc2720_read_pmic_state(poweroff, &id_low, &id_high);
 	if (ret)
 		return ret;
 	if (id_low != SC2720_EXPECTED_ID_LOW ||

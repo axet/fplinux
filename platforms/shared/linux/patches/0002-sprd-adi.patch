@@ -208,7 +208,7 @@ index a6baaf0..3caa38c 100644
  	} else if (t->tx_buf) {
  		u32 *p = (u32 *)t->tx_buf;
  		reg = *p++;
-@@ -352,9 +435,48 @@ static int sprd_adi_transfer_one(struct spi_controller *ctlr,
+@@ -352,9 +435,52 @@ static int sprd_adi_transfer_one(struct spi_controller *ctlr,
  		ret = -EINVAL;
  	}
 
@@ -223,6 +223,11 @@ index a6baaf0..3caa38c 100644
 +/* The final sys-off notifier cannot sleep in the SPI message queue. */
 +int sprd_adi_sc2720_power_off(struct spi_device *spi)
 +{
++	/* Same register sequence as the mainline SC27xx power-off driver. */
++#define SC27XX_SLP_CTRL		0xdf0
++#define SC27XX_LDO_XTL_EN	BIT(3)
++#define SC27XX_PWR_PD_HW	0xc2c
++#define SC27XX_PWR_OFF_EN	BIT(0)
 +	struct sprd_adi *sadi = spi_controller_get_devdata(spi->controller);
 +	unsigned long flags;
 +	u32 value;
@@ -241,14 +246,13 @@ index a6baaf0..3caa38c 100644
 +		ret = sprd_adi_read(sadi, 0xc04, &value);
 +	if (!ret && value != 0x2720)
 +		ret = -ENODEV;
++	/* Disable the external subsystem connection before cutting power. */
 +	if (!ret)
-+		ret = sprd_adi_read(sadi, 0xe14, &value);
-+	if (!ret && (value & BIT(3)))
-+		ret = -EBUSY;
++		ret = sprd_adi_write(sadi, SC27XX_SLP_CTRL, SC27XX_LDO_XTL_EN);
 +	if (!ret)
-+		ret = sprd_adi_read(sadi, 0xc20, &value);
++		ret = sprd_adi_write(sadi, SC27XX_PWR_PD_HW, SC27XX_PWR_OFF_EN);
 +	if (!ret)
-+		ret = sprd_adi_write(sadi, 0xc20, value | BIT(0));
++		ret = sprd_adi_drain_fifo(sadi);
 +	end_ret = sprd_adi_user_unlock(sadi, flags);
 +	return ret ? ret : end_ret;
 +}
