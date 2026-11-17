@@ -1,16 +1,15 @@
 diff --git a/drivers/spi/Kconfig b/drivers/spi/Kconfig
-index 8782514..ae3a9ab 100644
 --- a/drivers/spi/Kconfig
 +++ b/drivers/spi/Kconfig
-@@ -1096,13 +1096,13 @@ config SPI_SPACEMIT_K1
-
+@@ -1096,13 +1096,13 @@
+ 
  config SPI_SPRD
  	tristate "Spreadtrum SPI controller"
 -	depends on ARCH_SPRD || COMPILE_TEST
 +	depends on ARCH_SPRD || ARCH_SC9820E || COMPILE_TEST
  	help
  	  SPI driver for Spreadtrum SoCs.
-
+ 
  config SPI_SPRD_ADI
  	tristate "Spreadtrum ADI controller"
 -	depends on ARCH_SPRD || COMPILE_TEST
@@ -19,12 +18,11 @@ index 8782514..ae3a9ab 100644
  	help
  	  ADI driver based on SPI for Spreadtrum SoCs.
 diff --git a/drivers/spi/spi-sprd-adi.c b/drivers/spi/spi-sprd-adi.c
-index a6baaf0..3caa38c 100644
 --- a/drivers/spi/spi-sprd-adi.c
 +++ b/drivers/spi/spi-sprd-adi.c
-@@ -5,15 +5,18 @@
+@@ -5,15 +5,19 @@
   */
-
+ 
  #include <linux/delay.h>
 +#include <linux/clk.h>
  #include <linux/hwspinlock.h>
@@ -32,6 +30,7 @@ index a6baaf0..3caa38c 100644
  #include <linux/io.h>
 +#include <linux/iopoll.h>
  #include <linux/kernel.h>
++#include <linux/limits.h>
  #include <linux/module.h>
  #include <linux/of.h>
  #include <linux/platform_device.h>
@@ -39,9 +38,9 @@ index a6baaf0..3caa38c 100644
  #include <linux/spi/spi.h>
 +#include <linux/spi/sprd-adi.h>
  #include <linux/sizes.h>
-
+ 
  /* Registers definitions for ADI controller */
-@@ -34,7 +37,12 @@
+@@ -34,7 +38,12 @@
  #define REG_ADI_ARM_CMD_STS		0x3c
  #define REG_ADI_CHN_EN			0x40
  #define REG_ADI_CHN_ADDR(id)		(0x44 + (id - 2) * 4)
@@ -52,10 +51,10 @@ index a6baaf0..3caa38c 100644
 +#define ADI_USER_TIMEOUT_US 3000
 +#define BIT_GSSI_2WIRE_MODE BIT(31)
 +#define BIT_ARM_FIFO_OVERFLOW BIT(3)
-
+ 
  /* Bits definitions for register REG_ADI_GSSI_CFG0 */
  #define BIT_CLK_ALL_ON			BIT(30)
-@@ -137,9 +145,11 @@ struct sprd_adi_wdg {
+@@ -137,9 +146,11 @@
  struct sprd_adi_data {
  	u32 slave_offset;
  	u32 slave_addr_size;
@@ -65,16 +64,18 @@ index a6baaf0..3caa38c 100644
  	void (*wdg_rst)(void *p);
 +	bool user_lock;
  };
-
+ 
  struct sprd_adi {
-@@ -150,11 +160,66 @@ struct sprd_adi {
+@@ -150,11 +161,68 @@
  	unsigned long		slave_vbase;
  	unsigned long		slave_pbase;
  	const struct sprd_adi_data *data;
 +	raw_spinlock_t lock;
 +	bool faulted;
++	struct notifier_block bootrom_nb;
++	bool bootrom_armed;
  };
-
+ 
 +/* UMS9117's semaphore is acquired by reading zero, not by writing a token. */
 +static int sprd_adi_user_lock(struct sprd_adi *sadi, unsigned long *flags)
 +{
@@ -135,22 +136,22 @@ index a6baaf0..3caa38c 100644
  		dev_err(sadi->dev,
  			"slave address offset is incorrect, reg = 0x%x\n",
  			reg);
-@@ -174,7 +239,10 @@ static int sprd_adi_drain_fifo(struct sprd_adi *sadi)
+@@ -174,7 +242,10 @@
  		if (sts & BIT_FIFO_EMPTY)
  			break;
-
+ 
 -		cpu_relax();
 +		if (sadi->data->r3p0)
 +			udelay(1);
 +		else
 +			cpu_relax();
  	} while (--timeout);
-
+ 
  	if (timeout == 0) {
-@@ -214,11 +282,16 @@ static int sprd_adi_read_check_r3(u32 val, u32 reg)
+@@ -214,11 +285,16 @@
  	return sprd_adi_read_check(val, (reg & RDBACK_ADDR_MASK_R3) >> RDBACK_ADDR_SHIFT_R3);
  }
-
+ 
 +static int sprd_adi_read_check_r3p0(u32 val, u32 physical_addr)
 +{
 +	return sprd_adi_read_check(val, (physical_addr & 0xffff) >> 2);
@@ -163,19 +164,19 @@ index a6baaf0..3caa38c 100644
 -	u32 val;
 +	u32 val, command;
  	int ret = 0;
-
+ 
  	if (sadi->hwlock) {
-@@ -239,7 +312,8 @@ static int sprd_adi_read(struct sprd_adi *sadi, u32 reg, u32 *read_val)
+@@ -239,7 +315,8 @@
  	 * Set the slave address offset need to read into RD_CMD register,
  	 * then ADI controller will start to transfer automatically.
  	 */
 -	writel_relaxed(reg, sadi->base + REG_ADI_RD_CMD);
 +	command = sadi->data->r3p0 ? sadi->slave_pbase + reg : reg;
 +	writel_relaxed(command, sadi->base + REG_ADI_RD_CMD);
-
+ 
  	/*
  	 * Wait read operation complete, the BIT_RD_CMD_BUSY will be set
-@@ -268,7 +342,7 @@ static int sprd_adi_read(struct sprd_adi *sadi, u32 reg, u32 *read_val)
+@@ -268,7 +345,7 @@
  	 * address to validate data.
  	 */
  	if (sadi->data->read_check) {
@@ -184,7 +185,7 @@ index a6baaf0..3caa38c 100644
  		if (ret < 0)
  			goto out;
  	}
-@@ -335,13 +409,22 @@ static int sprd_adi_transfer_one(struct spi_controller *ctlr,
+@@ -335,13 +412,22 @@
  				 struct spi_transfer *t)
  {
  	struct sprd_adi *sadi = spi_controller_get_devdata(ctlr);
@@ -198,7 +199,7 @@ index a6baaf0..3caa38c 100644
 +		if (ret)
 +			return ret;
 +	}
-
+ 
  	if (t->rx_buf) {
  		reg = *(u32 *)t->rx_buf;
  		ret = sprd_adi_read(sadi, reg, &val);
@@ -208,10 +209,10 @@ index a6baaf0..3caa38c 100644
  	} else if (t->tx_buf) {
  		u32 *p = (u32 *)t->tx_buf;
  		reg = *p++;
-@@ -352,9 +435,52 @@ static int sprd_adi_transfer_one(struct spi_controller *ctlr,
+@@ -352,9 +438,52 @@
  		ret = -EINVAL;
  	}
-
+ 
 +	if (sadi->data->user_lock) {
 +		end_ret = sprd_adi_user_unlock(sadi, flags);
 +		if (!ret)
@@ -219,7 +220,7 @@ index a6baaf0..3caa38c 100644
 +	}
  	return ret;
  }
-
+ 
 +/* The final sys-off notifier cannot sleep in the SPI message queue. */
 +int sprd_adi_sc2720_power_off(struct spi_device *spi)
 +{
@@ -261,7 +262,7 @@ index a6baaf0..3caa38c 100644
  static void sprd_adi_set_wdt_rst_mode(void *p)
  {
  #if IS_ENABLED(CONFIG_SPRD_WATCHDOG)
-@@ -460,6 +582,108 @@ static int sprd_adi_restart_sc9860(struct sys_off_data *data)
+@@ -456,6 +585,145 @@
  	return sprd_adi_restart(data->cb_data, data->mode, data->cmd, &wdg);
  }
  
@@ -275,7 +276,7 @@ index a6baaf0..3caa38c 100644
 + * and fdl/src/main.c).  Everything runs under the ADI user lock because the
 + * final sys-off notifier must not sleep in the SPI message queue.
 + */
-+static int sprd_adi_restart_ums9117(struct sys_off_data *data)
++static int sprd_adi_arm_bootrom_reset(struct sprd_adi *sadi, const char *cmd)
 +{
 +#define UMS9117_PMIC_RST_STATUS	0xee8U
 +#define UMS9117_PMIC_MODULE_EN	0xc08U
@@ -284,14 +285,13 @@ index a6baaf0..3caa38c 100644
 +#define UMS9117_WDG_UNLOCK	0xe551U
 +#define UMS9117_WDG_LOCKED	0x1aaeU
 +#define UMS9117_WDG_TIMEOUT	32768U
-+	struct sprd_adi *sadi = data->cb_data;
 +	unsigned long flags;
 +	u32 value;
 +	int ret;
 +	int end_ret;
 +
-+	if (!data->cmd || (strncmp(data->cmd, "autodloader", 11) &&
-+			   strncmp(data->cmd, "bootrom", 7)))
++	if (!cmd || (strncmp(cmd, "autodloader", 11) &&
++		     strncmp(cmd, "bootrom", 7)))
 +		return NOTIFY_DONE;
 +	if (!sadi->data->user_lock)
 +		return -EOPNOTSUPP;
@@ -367,23 +367,61 @@ index a6baaf0..3caa38c 100644
 +	return NOTIFY_DONE;
 +}
 +
++static int sprd_adi_restart_ums9117(struct sys_off_data *data)
++{
++	struct sprd_adi *sadi = data->cb_data;
++
++	/* The high-priority reboot notifier has already armed the watchdog. */
++	if (sadi->bootrom_armed)
++		return NOTIFY_DONE;
++	return sprd_adi_arm_bootrom_reset(sadi, data->cmd);
++}
++
++/*
++ * device_shutdown() runs before sys-off handlers and takes tens of seconds on
++ * this phone, leaving the screen frozen long after `reboot`. Arm the same PMIC
++ * watchdog from a high-priority reboot notifier so the reset starts at once;
++ * the sys-off handler above then becomes a no-op for this path.
++ */
++static int sprd_adi_bootrom_reboot_notifier(struct notifier_block *nb,
++					    unsigned long action, void *cmd)
++{
++	struct sprd_adi *sadi = container_of(nb, struct sprd_adi, bootrom_nb);
++
++	if (action != SYS_RESTART || sadi->bootrom_armed || !cmd)
++		return NOTIFY_DONE;
++	if (strncmp(cmd, "autodloader", 11) && strncmp(cmd, "bootrom", 7))
++		return NOTIFY_DONE;
++
++	sadi->bootrom_armed = true;
++	sprd_adi_arm_bootrom_reset(sadi, cmd);
++	return NOTIFY_DONE;
++}
++
++static void sprd_adi_unregister_bootrom_notifier(void *data)
++{
++	struct sprd_adi *sadi = data;
++
++	unregister_reboot_notifier(&sadi->bootrom_nb);
++}
++
  static void sprd_adi_hw_init(struct sprd_adi *sadi)
  {
  	struct device_node *np = sadi->dev->of_node;
-@@ -463,6 +585,9 @@ static void sprd_adi_hw_init(struct sprd_adi *sadi)
+@@ -463,6 +731,9 @@
  	const __be32 *list;
  	u32 tmp;
-
+ 
 +	if (sadi->data->r3p0 && readl_relaxed(sadi->base + REG_ADI_CTRL0))
 +		writel_relaxed(0, sadi->base + REG_ADI_CTRL0);
 +
  	/* Set all channels as default priority */
  	writel_relaxed(0, sadi->base + REG_ADI_CHN_PRIL);
  	writel_relaxed(0, sadi->base + REG_ADI_CHN_PRIH);
-@@ -539,19 +664,56 @@ static int sprd_adi_probe(struct platform_device *pdev)
+@@ -539,19 +810,70 @@
  	if (IS_ERR(sadi->base))
  		return PTR_ERR(sadi->base);
-
+ 
 +	if (data->r3p0 &&
 +	    (resource_size(res) < data->slave_offset + data->slave_addr_size ||
 +	     res->end > U32_MAX))
@@ -400,6 +438,20 @@ index a6baaf0..3caa38c 100644
 +	if (data->user_lock) {
 +		struct clk *clk;
 +		u32 value;
++
++		sadi->bootrom_nb.notifier_call =
++			sprd_adi_bootrom_reboot_notifier;
++		sadi->bootrom_nb.priority = INT_MAX;
++		ret = register_reboot_notifier(&sadi->bootrom_nb);
++		if (ret)
++			return dev_err_probe(
++				&pdev->dev, ret,
++				"cannot register BootROM reboot notifier\n");
++		ret = devm_add_action_or_reset(
++			&pdev->dev, sprd_adi_unregister_bootrom_notifier,
++			sadi);
++		if (ret)
++			return ret;
 +
 +		clk = devm_clk_get_enabled(&pdev->dev, "enable");
 +		if (IS_ERR(clk))
@@ -437,10 +489,10 @@ index a6baaf0..3caa38c 100644
  		switch (ret) {
  		case 0:
  			/*
-@@ -593,6 +755,13 @@ static int sprd_adi_probe(struct platform_device *pdev)
+@@ -593,6 +915,13 @@
  	return 0;
  }
-
+ 
 +static struct sprd_adi_data r3p0_data = {
 +	.slave_offset = ADI_10BIT_SLAVE_OFFSET,
 +	.slave_addr_size = ADI_10BIT_SLAVE_ADDR_SIZE,
@@ -451,10 +503,10 @@ index a6baaf0..3caa38c 100644
  static struct sprd_adi_data sc9860_data = {
  	.slave_offset = ADI_10BIT_SLAVE_OFFSET,
  	.slave_addr_size = ADI_10BIT_SLAVE_ADDR_SIZE,
-@@ -601,6 +770,14 @@ static struct sprd_adi_data sc9860_data = {
+@@ -601,6 +930,14 @@
  	.wdg_rst = sprd_adi_set_wdt_rst_mode,
  };
-
+ 
 +static const struct sprd_adi_data ums9117_data = {
 +	.slave_offset = ADI_10BIT_SLAVE_OFFSET,
 +	.slave_addr_size = ADI_10BIT_SLAVE_ADDR_SIZE,
@@ -466,11 +518,10 @@ index a6baaf0..3caa38c 100644
  static struct sprd_adi_data sc9863_data = {
  	.slave_offset = ADI_12BIT_SLAVE_OFFSET,
  	.slave_addr_size = ADI_12BIT_SLAVE_ADDR_SIZE,
-@@ -614,6 +790,14 @@ static struct sprd_adi_data ums512_data = {
- };
-
+@@ -615,6 +952,14 @@
+ 
  static const struct of_device_id sprd_adi_of_match[] = {
-+	{
+ 	{
 +		.compatible = "sprd,ums9117-adi",
 +		.data = &ums9117_data,
 +	},
@@ -478,10 +529,11 @@ index a6baaf0..3caa38c 100644
 +		.compatible = "sprd,r3p0-adi",
 +		.data = &r3p0_data,
 +	},
- 	{
++	{
  		.compatible = "sprd,sc9860-adi",
  		.data = &sc9860_data,
-@@ -626,7 +810,7 @@ static const struct of_device_id sprd_adi_of_match[] = {
+ 	},
+@@ -626,7 +971,7 @@
  		.compatible = "sprd,ums512-adi",
  		.data = &ums512_data,
  	},
@@ -489,4 +541,4 @@ index a6baaf0..3caa38c 100644
 +	{},
  };
  MODULE_DEVICE_TABLE(of, sprd_adi_of_match);
-
+ 

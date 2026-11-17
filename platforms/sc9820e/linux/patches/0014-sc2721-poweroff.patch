@@ -1,5 +1,4 @@
 diff --git a/drivers/spi/spi-sprd-adi.c b/drivers/spi/spi-sprd-adi.c
-index 3caa38c..185d085 100644
 --- a/drivers/spi/spi-sprd-adi.c
 +++ b/drivers/spi/spi-sprd-adi.c
 @@ -10,6 +10,7 @@
@@ -8,12 +7,12 @@ index 3caa38c..185d085 100644
  #include <linux/iopoll.h>
 +#include <linux/irqflags.h>
  #include <linux/kernel.h>
+ #include <linux/limits.h>
  #include <linux/module.h>
- #include <linux/of.h>
-@@ -114,6 +115,16 @@
+@@ -115,6 +116,16 @@
  #define PMIC_CLK_EN			0xc18
  #define PMIC_WDG_BASE			0x80
-
+ 
 +#define SC2721_CHIP_ID_HIGH 0xc04
 +#define SC2721_CHIP_ID 0x2721
 +#define SC2721_PWR_WR_PROT_VALUE 0xefc
@@ -27,10 +26,10 @@ index 3caa38c..185d085 100644
  /* Definition of PMIC reset status register */
  #define HWRST_STATUS_SECURITY		0x02
  #define HWRST_STATUS_RECOVERY		0x20
-@@ -287,23 +298,12 @@ static int sprd_adi_read_check_r3p0(u32 val, u32 physical_addr)
+@@ -290,23 +301,12 @@
  	return sprd_adi_read_check(val, (physical_addr & 0xffff) >> 2);
  }
-
+ 
 -static int sprd_adi_read(struct sprd_adi *sadi, u32 reg, u32 *read_val)
 +static int sprd_adi_read_locked(struct sprd_adi *sadi, u32 reg, u32 *read_val)
  {
@@ -38,7 +37,7 @@ index 3caa38c..185d085 100644
 -	unsigned long flags;
  	u32 val, command;
  	int ret = 0;
-
+ 
 -	if (sadi->hwlock) {
 -		ret = hwspin_lock_timeout_irqsave(sadi->hwlock,
 -						  ADI_HWSPINLOCK_TIMEOUT,
@@ -52,26 +51,26 @@ index 3caa38c..185d085 100644
  	ret = sprd_adi_check_addr(sadi, reg);
  	if (ret)
  		goto out;
-@@ -350,14 +350,11 @@ static int sprd_adi_read(struct sprd_adi *sadi, u32 reg, u32 *read_val)
+@@ -353,14 +353,11 @@
  	*read_val = val & RD_VALUE_MASK;
-
+ 
  out:
 -	if (sadi->hwlock)
 -		hwspin_unlock_irqrestore(sadi->hwlock, &flags);
  	return ret;
  }
-
+ 
 -static int sprd_adi_write(struct sprd_adi *sadi, u32 reg, u32 val)
 +static int sprd_adi_read(struct sprd_adi *sadi, u32 reg, u32 *read_val)
  {
 -	u32 timeout = ADI_FIFO_DRAIN_TIMEOUT;
  	unsigned long flags;
  	int ret;
-
-@@ -371,6 +368,17 @@ static int sprd_adi_write(struct sprd_adi *sadi, u32 reg, u32 val)
+ 
+@@ -374,6 +371,17 @@
  		}
  	}
-
+ 
 +	ret = sprd_adi_read_locked(sadi, reg, read_val);
 +	if (sadi->hwlock)
 +		hwspin_unlock_irqrestore(sadi->hwlock, &flags);
@@ -86,9 +85,9 @@ index 3caa38c..185d085 100644
  	ret = sprd_adi_check_addr(sadi, reg);
  	if (ret)
  		goto out;
-@@ -399,6 +407,24 @@ static int sprd_adi_write(struct sprd_adi *sadi, u32 reg, u32 val)
+@@ -402,6 +410,24 @@
  	}
-
+ 
  out:
 +	return ret;
 +}
@@ -111,10 +110,10 @@ index 3caa38c..185d085 100644
  	if (sadi->hwlock)
  		hwspin_unlock_irqrestore(sadi->hwlock, &flags);
  	return ret;
-@@ -477,6 +503,60 @@ int sprd_adi_sc2720_power_off(struct spi_device *spi)
+@@ -484,6 +510,60 @@
  }
  EXPORT_SYMBOL_GPL(sprd_adi_sc2720_power_off);
-
+ 
 +int sprd_adi_sc2721_power_off(struct spi_device *spi)
 +{
 +	struct sprd_adi *sadi;
