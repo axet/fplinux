@@ -1,30 +1,57 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * UMS9117 cellular DSP loader foundation.
+ * UMS9117 cellular DSP loader.
  *
  * Loads the stock GSM/LTE CEVA layer-1 images into their fixed physical
  * regions and exposes a minimal sysfs interface for checking the result.
  * The header offset is configurable per image because the GSM partition has
  * a 0x80-byte "V1GGE_Bugid..." header while the LTE partition starts at 0.
  *
- * Deliberately does NOT release DSP resets or touch clocks: that sequence is
- * still being reconstructed from the MOCOR binary. Enabling this driver
- * requires the DSP regions to be excluded from System RAM in the device tree.
+ * The optional "power_on" attribute reproduces the AON/PMU register sequence
+ * reconstructed from the MOCOR CP (LTE ADX init) and polls for the DSP ready
+ * magic in the LTE shared-memory page. It is opt-in: probing never touches
+ * clocks or resets on its own. Enabling this driver requires the DSP regions
+ * to be excluded from System RAM in the device tree.
  */
 
+#include <linux/bits.h>
+#include <linux/delay.h>
 #include <linux/device.h>
+#include <linux/errno.h>
 #include <linux/firmware.h>
 #include <linux/io.h>
 #include <linux/ioport.h>
+#include <linux/mfd/syscon.h>
 #include <linux/memremap.h>
 #include <linux/mm.h>
 #include <linux/module.h>
 #include <linux/of.h>
 #include <linux/platform_device.h>
+#include <linux/regmap.h>
 #include <linux/slab.h>
 #include <linux/string.h>
 
 #define GSM_MAGIC "V1GGE_Bugid__990513_"
+
+/* AON_APB (0x402e0000) offsets touched by the CP LTE ADX DSP init. */
+#define AON_DSP_CTRL		0x24c	/* bit0 toggled around DSP start */
+#define AON_CLK_EB		0x130	/* bit16 = DSP clock enable */
+#define AON_DSP_VEC		0x248	/* DSP boot/vector value */
+#define AON_MISC_CFG		0x6c	/* OR 0x9620 during init */
+
+/* PMU_APB (0x402b0000) offsets written by FUN_80c25904(1). */
+#define PMU_DSP_CLK_EB0		0x2044
+#define PMU_DSP_CFG		0x20cc
+#define PMU_DSP_CLK_EB1		0x2034
+
+/* LTE DSP shared-memory page (0x80447000) +0xe14 ready magic. */
+#define DSP_READY_OFFSET	0xe14
+#define DSP_READY_MAGIC		0x22222222
+#define DSP_READY_POLLS		100
+#define DSP_READY_DELAY_MS	10
+
+/* CP DAT_81147190 = 0x80448400; stored in AON_DSP_VEC as (addr >> 1). */
+#define DSP_VECTOR_VALUE	(0x80448400U >> 1)
 
 struct dsp_image {
 	const char *name;
@@ -39,6 +66,9 @@ struct ums9117_modem {
 	struct dsp_image lte;
 	void __iomem *gsm_virt;
 	void __iomem *lte_virt;
+	void __iomem *shared_virt;
+	struct regmap *aon_apb;
+	struct regmap *pmu_apb;
 	bool gsm_loaded;
 	bool lte_loaded;
 };
@@ -109,6 +139,105 @@ static int load_lte(struct ums9117_modem *modem)
 	return ret;
 }
 
+static int dsp_ready(struct ums9117_modem *modem)
+{
+	return readl(modem->shared_virt + DSP_READY_OFFSET) == DSP_READY_MAGIC;
+}
+
+/* Reproduce the AON/PMU sequence from the CP LTE ADX DSP init. */
+static int dsp_power_on(struct ums9117_modem *modem)
+{
+	int ret, i;
+
+	if (!modem->gsm_loaded || !modem->lte_loaded)
+		return -EINVAL;
+	if (!modem->aon_apb || !modem->pmu_apb || !modem->shared_virt)
+		return -ENODEV;
+
+	/* FUN_81146c24: clear DSP start bit, enable DSP clock. */
+	ret = regmap_update_bits(modem->aon_apb, AON_DSP_CTRL, BIT(0), 0);
+	if (ret)
+		return ret;
+	ret = regmap_update_bits(modem->aon_apb, AON_CLK_EB,
+				 BIT(16), BIT(16));
+	if (ret)
+		return ret;
+
+	/* FUN_80c25904(1): PMU DSP clock/power configuration. */
+	ret = regmap_write(modem->pmu_apb, PMU_DSP_CLK_EB0, 0x02000000);
+	if (ret)
+		return ret;
+	ret = regmap_write(modem->pmu_apb, PMU_DSP_CLK_EB0, 0x01000000);
+	if (ret)
+		return ret;
+	ret = regmap_write(modem->pmu_apb, PMU_DSP_CFG, 0x00020000);
+	if (ret)
+		return ret;
+	ret = regmap_write(modem->pmu_apb, PMU_DSP_CLK_EB1, 0x03000000);
+	if (ret)
+		return ret;
+
+	/* FUN_81146c3a: poll the DSP ready magic (CP does 100 x 10 ms). */
+	for (i = 0; i < DSP_READY_POLLS; i++) {
+		if (dsp_ready(modem))
+			break;
+		mdelay(DSP_READY_DELAY_MS);
+	}
+
+	/* Tail of FUN_81146dd8: interrupt/vector handshake. */
+	ret = regmap_update_bits(modem->aon_apb, AON_MISC_CFG,
+				 0x9620, 0x9620);
+	if (ret)
+		return ret;
+	ret = regmap_update_bits(modem->aon_apb, AON_DSP_CTRL, BIT(0), 0);
+	if (ret)
+		return ret;
+	ret = regmap_update_bits(modem->aon_apb, AON_CLK_EB,
+				 BIT(16), BIT(16));
+	if (ret)
+		return ret;
+	ret = regmap_write(modem->aon_apb, AON_DSP_VEC, DSP_VECTOR_VALUE);
+	if (ret)
+		return ret;
+	ret = regmap_update_bits(modem->aon_apb, AON_DSP_CTRL, BIT(0), BIT(0));
+	if (ret)
+		return ret;
+	ret = regmap_update_bits(modem->aon_apb, AON_CLK_EB, BIT(16), 0);
+	if (ret)
+		return ret;
+
+	dev_info(modem->dev,
+		 "DSP power-on done; ready=%d magic=0x%08x\n",
+		 dsp_ready(modem),
+		 readl(modem->shared_virt + DSP_READY_OFFSET));
+	return dsp_ready(modem) ? 0 : -ETIMEDOUT;
+}
+
+static ssize_t dsp_ready_show(struct device *dev, struct device_attribute *attr,
+			      char *buf)
+{
+	struct ums9117_modem *modem = dev_get_drvdata(dev);
+
+	if (!modem->shared_virt)
+		return -ENODEV;
+	return sysfs_emit(buf, "0x%08x\n",
+			  readl(modem->shared_virt + DSP_READY_OFFSET));
+}
+
+static ssize_t power_on_store(struct device *dev, struct device_attribute *attr,
+			      const char *buf, size_t count)
+{
+	struct ums9117_modem *modem = dev_get_drvdata(dev);
+	int ret;
+
+	if (!count || buf[0] != '1')
+		return count;
+	ret = dsp_power_on(modem);
+	if (ret)
+		return ret;
+	return count;
+}
+
 static ssize_t loaded_show(struct device *dev, struct device_attribute *attr,
 			   char *buf)
 {
@@ -151,15 +280,19 @@ static ssize_t load_lte_store(struct device *dev, struct device_attribute *attr,
 }
 
 static DEVICE_ATTR_RO(loaded);
+static DEVICE_ATTR_RO(dsp_ready);
 static DEVICE_ATTR_WO(load);
 static DEVICE_ATTR_WO(load_gsm);
 static DEVICE_ATTR_WO(load_lte);
+static DEVICE_ATTR_WO(power_on);
 
 static struct attribute *modem_attrs[] = {
 	&dev_attr_loaded.attr,
+	&dev_attr_dsp_ready.attr,
 	&dev_attr_load.attr,
 	&dev_attr_load_gsm.attr,
 	&dev_attr_load_lte.attr,
+	&dev_attr_power_on.attr,
 	NULL,
 };
 ATTRIBUTE_GROUPS(modem);
@@ -210,6 +343,25 @@ static int ums9117_modem_probe(struct platform_device *pdev)
 			modem->lte.region, MEMREMAP_WB);
 	if (!modem->lte_virt)
 		return -ENOMEM;
+
+	/* LTE DSP shared-memory page holds the ready magic at +0xe14. */
+	res = platform_get_resource_byname(pdev, IORESOURCE_MEM, "dsp-shared");
+	if (res) {
+		modem->shared_virt = (void __iomem *)devm_memremap(
+			dev, res->start, resource_size(res), MEMREMAP_WB);
+		if (!modem->shared_virt)
+			return -ENOMEM;
+	}
+
+	/* AON/PMU regmaps are optional so the loader still works without them. */
+	modem->aon_apb = syscon_regmap_lookup_by_phandle(dev->of_node,
+							 "fplinux,aon-apb");
+	if (IS_ERR(modem->aon_apb))
+		modem->aon_apb = NULL;
+	modem->pmu_apb = syscon_regmap_lookup_by_phandle(dev->of_node,
+							 "fplinux,pmu-apb");
+	if (IS_ERR(modem->pmu_apb))
+		modem->pmu_apb = NULL;
 
 	{
 		u32 header;
