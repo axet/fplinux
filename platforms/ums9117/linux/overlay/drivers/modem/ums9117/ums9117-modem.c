@@ -15,7 +15,9 @@
 #include <linux/device.h>
 #include <linux/firmware.h>
 #include <linux/io.h>
+#include <linux/ioport.h>
 #include <linux/memremap.h>
+#include <linux/mm.h>
 #include <linux/module.h>
 #include <linux/of.h>
 #include <linux/platform_device.h>
@@ -178,19 +180,34 @@ static int ums9117_modem_probe(struct platform_device *pdev)
 		return -ENODEV;
 	modem->gsm.phys = res->start;
 	modem->gsm.region = resource_size(res);
-	/* The DT reserved-memory node already owns this region. It is SRAM, not
-	 * an MMIO device, so map it as normal memory; ioremap(MT_DEVICE) is
-	 * rejected for addresses memblock still reports as mapped RAM. */
-	modem->gsm_virt = (void __iomem *)devm_memremap(dev, res->start, resource_size(res), MEMREMAP_WB);
-	if (!modem->gsm_virt)
-		return -ENOMEM;
 
 	res = platform_get_resource_byname(pdev, IORESOURCE_MEM, "dsp-lte");
 	if (!res)
 		return -ENODEV;
 	modem->lte.phys = res->start;
 	modem->lte.region = resource_size(res);
-	modem->lte_virt = (void __iomem *)devm_memremap(dev, res->start, resource_size(res), MEMREMAP_WB);
+
+	/* A bulk image copy into System RAM would corrupt the running kernel and
+	 * hard-reset the phone. Refuse to probe unless both DSP windows are
+	 * excluded from System RAM (the DTB memory node must start above them). */
+	if (region_intersects(modem->gsm.phys, modem->gsm.region,
+			      IORESOURCE_SYSTEM_RAM, IORES_DESC_NONE) !=
+	    REGION_DISJOINT ||
+	    region_intersects(modem->lte.phys, modem->lte.region,
+			      IORESOURCE_SYSTEM_RAM, IORES_DESC_NONE) !=
+	    REGION_DISJOINT)
+		return dev_err_probe(dev, -EBUSY,
+				     "DSP regions overlap System RAM\n");
+
+	/* The DT reserved-memory node already owns these regions. They are SRAM,
+	 * not MMIO devices, so map them as normal memory; ioremap(MT_DEVICE) is
+	 * rejected for addresses memblock still reports as mapped RAM. */
+	modem->gsm_virt = (void __iomem *)devm_memremap(dev, modem->gsm.phys,
+			modem->gsm.region, MEMREMAP_WB);
+	if (!modem->gsm_virt)
+		return -ENOMEM;
+	modem->lte_virt = (void __iomem *)devm_memremap(dev, modem->lte.phys,
+			modem->lte.region, MEMREMAP_WB);
 	if (!modem->lte_virt)
 		return -ENOMEM;
 

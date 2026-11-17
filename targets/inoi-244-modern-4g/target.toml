@@ -26,7 +26,7 @@ packages = []
 
 [linux]
 config_fragment = "linux/config/config.fragment"
-memory = { base = 0x80200000, size = 0x03c00000 }
+memory = { base = 0x80800000, size = 0x03600000 }
 dtb = "unisoc/ums9117-inoi-244-modern-4g.dtb"
 debug_dtb = "ums9117-inoi-244-modern-4g.dtb"
 patches = []

@@ -17,9 +17,16 @@
 #include "fplinux-inoi-244-modern-4g-panel-addresses.h"
 
 / {
-	memory@80200000 {
+	/*
+	 * Linux RAM starts above the stock CEVA DSP load windows
+	 * (GSM 0x80100000..0x803fffff, LTE 0x80448000..0x8072bfff).
+	 * The decompressor derives PHYS_OFFSET from this base, so keeping it
+	 * below 0x80800000 would put the running kernel inside the GSM region
+	 * and any DSP image copy would overwrite live kernel memory.
+	 */
+	memory@80800000 {
 		device_type = "memory";
-		reg = <0x80200000 0x03c00000>;
+		reg = <0x80800000 0x03600000>;
 	};
 
 	reserved-memory {
