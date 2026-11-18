@@ -1,0 +1,9 @@
+prefix=/usr
+libdir=${prefix}/lib
+includedir=${prefix}/include
+
+Name: fplinux-contacts
+Description: FPLinux vCard contacts storage and lookup library
+Version: 1
+Libs: -L${libdir} -lfplinux-contacts
+Cflags: -I${includedir}/fplinux

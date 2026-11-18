@@ -1,0 +1,44 @@
+# Maintainer: FPLinux contributors <fplinux@example.invalid>
+pkgname=fplinux-libcontacts
+pkgver=1
+pkgrel=0
+pkgdesc="vCard contacts storage and lookup library for FPLinux"
+url="https://github.com/fplinux/fplinux"
+arch="armv7"
+license="LGPL-2.1-or-later"
+makedepends_build="clang22 lld22"
+makedepends_host="musl-dev linux-headers gcc"
+subpackages="$pkgname-dev"
+options="!check"
+source="
+	contacts.c
+	fplinux-contacts.h
+	fplinux-contacts.pc
+	fplinux-contacts.map
+"
+builddir="$srcdir"
+
+build() {
+	"$CC" $CPPFLAGS $CFLAGS -Os -std=c11 -Wall -Wextra -Werror -fPIC \
+		-shared contacts.c $LDFLAGS \
+		-Wl,--version-script=fplinux-contacts.map \
+		-Wl,-soname,libfplinux-contacts.so.1 \
+		-o libfplinux-contacts.so.1
+}
+
+package() {
+	install -Dm755 libfplinux-contacts.so.1 \
+		"$pkgdir/usr/lib/libfplinux-contacts.so.1"
+	ln -s libfplinux-contacts.so.1 "$pkgdir/usr/lib/libfplinux-contacts.so"
+	install -Dm644 fplinux-contacts.h \
+		"$pkgdir/usr/include/fplinux/fplinux-contacts.h"
+	install -Dm644 fplinux-contacts.pc \
+		"$pkgdir/usr/lib/pkgconfig/fplinux-contacts.pc"
+}
+
+sha512sums="
+2792cd2eb48fc8fe2a5f525811225f770707d680398e5df5c3e83f0b58df0dde32502063410e2f86cb466d7dad7d1a3715c5004040ed36f0b301f83c538b1dae  contacts.c
+c04bcfb890a4d1d680590c4c61a63f968acc83b8fd91c7c873c32fd1751c857637d99e598e8fb5bc1e4fef7b3bd7176ff6ab4c46abf5aa9c8f2f97efebb9ab4f  fplinux-contacts.h
+bca571b62bbbc615e9e611d09db42eff8426d78fe8e9d2dc387e11b5502bc15d0d80a75f12cd4f7934b5c91c0d337702f96b8d95a21cd22d55511a33af140c88  fplinux-contacts.pc
+d0e3b713d9a38f288acd741aa791db47864fc9e238d2fd0979d32f73e967281b2afc48ebdd22d0dda86f9cc0ad7685c64736ff13fc4cb69a80187bf41f3e4bf8  fplinux-contacts.map
+"

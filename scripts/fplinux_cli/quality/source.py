@@ -63,6 +63,7 @@ _LVGL_APORTS = frozenset(
         "fplinux-settings",
         "fplinux-snake",
         "fplinux-notes",
+        "fplinux-contacts",
         "fplinux-terminal",
         "fplinux-ui",
     }

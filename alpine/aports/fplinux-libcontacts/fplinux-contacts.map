@@ -1,0 +1,21 @@
+/* SPDX-License-Identifier: LGPL-2.1-or-later */
+{
+global:
+	fplinux_contacts_dir;
+	fplinux_contacts_ensure_dir;
+	fplinux_contact_list_init;
+	fplinux_contact_list_free;
+	fplinux_contact_list_load;
+	fplinux_contact_list_find_uid;
+	fplinux_contacts_normalize_number;
+	fplinux_contacts_number_match;
+	fplinux_contact_list_lookup_number;
+	fplinux_contact_parse;
+	fplinux_contact_load_file;
+	fplinux_contact_format_vcard;
+	fplinux_contact_save;
+	fplinux_contact_delete;
+	fplinux_contacts_generate_uid;
+local:
+	*;
+};

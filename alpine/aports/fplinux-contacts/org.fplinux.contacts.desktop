@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Contacts
+Name[ru]=Контакты
+Exec=/usr/bin/fplinux-contacts
+Icon=org.fplinux.contacts
+Categories=Utility;ContactManagement;
+X-FPLinux-Mode=integrated

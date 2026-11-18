@@ -1,0 +1,49 @@
+# Maintainer: FPLinux contributors <fplinux@example.invalid>
+pkgname=fplinux-contacts
+pkgver=1
+pkgrel=0
+pkgdesc="Simple vCard contacts application for FPLinux"
+url="https://github.com/fplinux/fplinux"
+arch="armv7"
+license="GPL-2.0-only"
+depends="fplinux-ui fplinux-libcontacts"
+makedepends_build="clang22 lld22 pkgconf gettext"
+makedepends_host="musl-dev musl-libintl linux-headers fplinux-ui-dev fplinux-libcontacts-dev"
+options="!check"
+source="
+	fplinux-contacts.c
+	fplinux-cli.c
+	fplinux-cli.h
+	org.fplinux.contacts.desktop
+	ru.po
+"
+builddir="$srcdir"
+
+build() {
+	export PKG_CONFIG_SYSROOT_DIR="$CBUILDROOT"
+	export PKG_CONFIG_LIBDIR="$CBUILDROOT/usr/lib/pkgconfig:$CBUILDROOT/usr/share/pkgconfig"
+	"$CC" $CPPFLAGS $CFLAGS -Os -std=c11 -Wall -Wextra -Werror \
+		-I"$srcdir" \
+		$(pkg-config --cflags fplinux-ui fplinux-contacts) \
+		fplinux-contacts.c fplinux-cli.c \
+		$(pkg-config --libs fplinux-ui fplinux-contacts) \
+		$LDFLAGS -Wl,--gc-sections -o fplinux-contacts
+	msgfmt --check --output-file=ru.mo ru.po
+}
+
+package() {
+	install -Dm755 "$builddir/fplinux-contacts" \
+		"$pkgdir/usr/bin/fplinux-contacts"
+	install -Dm644 "$srcdir/org.fplinux.contacts.desktop" \
+		"$pkgdir/usr/share/applications/org.fplinux.contacts.desktop"
+	install -Dm644 "$builddir/ru.mo" \
+		"$pkgdir/usr/share/locale/ru/LC_MESSAGES/org.fplinux.contacts.mo"
+}
+
+sha512sums="
+48c14708386d0183dec13765c7d432e65419cba89e074e7cbdf3146360dfee11565816f23decc43f190cffac16a57e4bf0558f88aab65ba7471e7b2f4b4179f2  fplinux-contacts.c
+60be1ccccf0215ea13bc64fd442a0498e7db203234ce74f92cec502295e8ac703a089438848b9a1850102836855537f561e9bd8313751574a069eb0ec6dcf31a  fplinux-cli.c
+9677a324ea1cbcca154f472c83eb0660badfa11c2b444116f27080bd839dee2ab9ea6ef3b0c495f6074207559b813c843f284786f8b1e3c89023121b5aacb453  fplinux-cli.h
+f9c27610e643539fdd1ddfcedf9bc275ba37f0f66cdd74cb3bc1358ca3d0e54e2146f417a8ecbe474fe6da2b2e298f98a8500c2b96f70020a5b744f776d446c8  org.fplinux.contacts.desktop
+b8832db1266929c0d5eb44ebd6ee1bcf64d5df3c199cf3d22c70df9684c49b96221873761578fa0026510f76bfafc5288b92e7fb67c2253e7eaaa75747e8e291  ru.po
+"
