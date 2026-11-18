@@ -11,9 +11,9 @@ maintainers:
 
 description: |
   Loads the stock GSM and LTE CEVA layer-1 images into fixed physical regions.
-  Both regions must be excluded from System RAM. This binding covers image
-  loading only; DSP reset/clock control and the mailbox protocol are not
-  represented yet.
+  Both load regions must be excluded from System RAM. The shared page holds the
+  DSP ready magic and the optional NV calibration word. Clock/reset and mailbox
+  access are opt-in; probing never starts the DSP on its own.
 
 properties:
   compatible:
@@ -23,11 +23,13 @@ properties:
     items:
       - description: GSM DSP load region
       - description: LTE DSP load region
+      - description: LTE DSP shared page
 
   reg-names:
     items:
       - const: dsp-gsm
       - const: dsp-lte
+      - const: dsp-shared
 
   firmware-name-gsm:
     $ref: /schemas/types.yaml#/definitions/string
@@ -45,6 +47,29 @@ properties:
     $ref: /schemas/types.yaml#/definitions/uint32
     description: Bytes to skip before the LTE payload. Defaults to 0.
 
+  fplinux,dsp-nv-stub:
+    $ref: /schemas/types.yaml#/definitions/uint32
+    description: |
+      Initial value for the calibration/NV word written to the LTE shared page
+      at +0xe00 before the DSP is released. The stock CP derives this word from
+      a runtime NV lookup. The nv_stub sysfs attribute can override it.
+
+  fplinux,aon-apb:
+    $ref: /schemas/types.yaml#/definitions/phandle
+    description: AON_APB syscon used for the opt-in DSP start sequence.
+
+  fplinux,pmu-apb:
+    $ref: /schemas/types.yaml#/definitions/phandle
+    description: PMU_APB syscon used for the opt-in DSP start sequence.
+
+  mboxes:
+    maxItems: 1
+    description: Mailbox channel used for the optional ready exchange.
+
+  mbox-names:
+    items:
+      - const: dsp
+
 required:
   - compatible
   - reg
@@ -56,8 +81,11 @@ examples:
   - |
     modem@80100000 {
         compatible = "fplinux,ums9117-modem";
-        reg = <0x80100000 0x300000>, <0x80448000 0x2e4000>;
-        reg-names = "dsp-gsm", "dsp-lte";
+        reg = <0x80100000 0x300000>, <0x80448000 0x2e4000>,
+              <0x80447000 0x1000>;
+        reg-names = "dsp-gsm", "dsp-lte", "dsp-shared";
         firmware-name-gsm = "ums9117/gsm_dsp.bin";
         firmware-name-lte = "ums9117/lte_dsp.bin";
+        mbox-names = "dsp";
+        mboxes = <&mailbox 3>;
     };

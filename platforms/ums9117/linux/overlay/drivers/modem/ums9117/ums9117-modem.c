@@ -12,6 +12,12 @@
  * magic in the LTE shared-memory page. It is opt-in: probing never touches
  * clocks or resets on its own. Enabling this driver requires the DSP regions
  * to be excluded from System RAM in the device tree.
+ *
+ * The stock CP also writes one calibration/NV configuration word into the LTE
+ * shared page at +0xe00 before starting the DSP (FUN_811c2414). Its value is
+ * derived from a runtime NV lookup that is not yet reproducible offline, so
+ * "nv_stub" lets userspace supply the final word; "power_on" applies it after
+ * the cold-start setup and before the AON vector handshake when configured.
  */
 
 #include <linux/bits.h>
@@ -21,6 +27,7 @@
 #include <linux/firmware.h>
 #include <linux/io.h>
 #include <linux/ioport.h>
+#include <linux/kernel.h>
 #include <linux/mailbox_client.h>
 #include <linux/mfd/syscon.h>
 #include <linux/mm.h>
@@ -44,7 +51,9 @@
 #define PMU_DSP_CFG		0x20cc
 #define PMU_DSP_CLK_EB1		0x2034
 
-/* LTE DSP shared-memory page (0x80447000) +0xe14 ready magic. */
+/* LTE DSP shared-memory page (0x80447000). */
+/* FUN_811c2414 writes the NV-derived configuration word here. */
+#define DSP_NV_STUB_OFFSET	0xe00
 #define DSP_READY_OFFSET	0xe14
 #define DSP_READY_MAGIC		0x22222222
 #define DSP_READY_POLLS		100
@@ -71,6 +80,8 @@ struct ums9117_modem {
 	struct regmap *pmu_apb;
 	struct mbox_client mbox_client;
 	struct mbox_chan *dsp_chan;
+	u32 nv_stub;
+	bool nv_stub_set;
 	bool gsm_loaded;
 	bool lte_loaded;
 };
@@ -209,6 +220,14 @@ static int dsp_power_on(struct ums9117_modem *modem)
 	if (ret)
 		return ret;
 
+	/* FUN_811c2414 runs after the cold-start setup but before the final
+	 * interrupt/vector handshake that releases the DSP.
+	 */
+	if (modem->nv_stub_set) {
+		writel(modem->nv_stub, modem->shared_virt + DSP_NV_STUB_OFFSET);
+		dev_info(modem->dev, "DSP NV stub = 0x%08x\n", modem->nv_stub);
+	}
+
 	/* Tail of FUN_81146dd8: interrupt/vector handshake. */
 	ret = regmap_update_bits(modem->aon_apb, AON_MISC_CFG,
 				 0x9620, 0x9620);
@@ -233,20 +252,18 @@ static int dsp_power_on(struct ums9117_modem *modem)
 
 	{
 		u32 aon_ctrl = 0, aon_vec = 0, pmu_clk = 0;
-		u32 shared_e00 = 0, shared_e04 = 0;
+		u32 stub = readl(modem->shared_virt + DSP_NV_STUB_OFFSET);
 
 		regmap_read(modem->aon_apb, AON_DSP_CTRL, &aon_ctrl);
 		regmap_read(modem->aon_apb, AON_DSP_VEC, &aon_vec);
 		regmap_read(modem->pmu_apb, PMU_DSP_CLK_EB1, &pmu_clk);
-		shared_e00 = readl(modem->shared_virt + 0xe00);
-		shared_e04 = readl(modem->shared_virt + 0xe04);
 		dev_info(modem->dev,
-			 "DSP power-on done; ready=%d magic=0x%08x "
-			 "shared[e00]=0x%08x shared[e04]=0x%08x "
-			 "aon[24c]=0x%08x aon[248]=0x%08x pmu[2034]=0x%08x\n",
+			 "DSP power-on done; ready=%d magic=0x%08x stub=0x%08x\n",
 			 dsp_ready(modem),
-			 readl(modem->shared_virt + DSP_READY_OFFSET),
-			 shared_e00, shared_e04, aon_ctrl, aon_vec, pmu_clk);
+			 readl(modem->shared_virt + DSP_READY_OFFSET), stub);
+		dev_info(modem->dev,
+			 "DSP power-on regs: aon[24c]=0x%08x aon[248]=0x%08x pmu[2034]=0x%08x\n",
+			 aon_ctrl, aon_vec, pmu_clk);
 	}
 	/* Cold start is complete here: the CP does not wait for a ready magic
 	 * on the first boot path. Use the "handshake" attribute for the re-init
@@ -263,6 +280,39 @@ static ssize_t dsp_ready_show(struct device *dev, struct device_attribute *attr,
 		return -ENODEV;
 	return sysfs_emit(buf, "0x%08x\n",
 			  readl(modem->shared_virt + DSP_READY_OFFSET));
+}
+
+/* The stock word combines the NV lookup result in the low half with flags in
+ * the high half. Until the runtime NV table is reconstructed, userspace owns
+ * the final 32-bit value; show reads back what is actually in shared memory.
+ */
+static ssize_t nv_stub_show(struct device *dev, struct device_attribute *attr,
+			    char *buf)
+{
+	struct ums9117_modem *modem = dev_get_drvdata(dev);
+
+	if (!modem->shared_virt)
+		return -ENODEV;
+	return sysfs_emit(buf, "0x%08x\n",
+			  readl(modem->shared_virt + DSP_NV_STUB_OFFSET));
+}
+
+static ssize_t nv_stub_store(struct device *dev, struct device_attribute *attr,
+			     const char *buf, size_t count)
+{
+	struct ums9117_modem *modem = dev_get_drvdata(dev);
+	u32 value;
+	int ret;
+
+	if (!modem->shared_virt)
+		return -ENODEV;
+	ret = kstrtou32(buf, 0, &value);
+	if (ret)
+		return ret;
+	modem->nv_stub = value;
+	modem->nv_stub_set = true;
+	writel(value, modem->shared_virt + DSP_NV_STUB_OFFSET);
+	return count;
 }
 
 static ssize_t power_on_store(struct device *dev, struct device_attribute *attr,
@@ -336,6 +386,7 @@ static ssize_t load_lte_store(struct device *dev, struct device_attribute *attr,
 
 static DEVICE_ATTR_RO(loaded);
 static DEVICE_ATTR_RO(dsp_ready);
+static DEVICE_ATTR_RW(nv_stub);
 static DEVICE_ATTR_WO(load);
 static DEVICE_ATTR_WO(load_gsm);
 static DEVICE_ATTR_WO(load_lte);
@@ -345,6 +396,7 @@ static DEVICE_ATTR_WO(handshake);
 static struct attribute *modem_attrs[] = {
 	&dev_attr_loaded.attr,
 	&dev_attr_dsp_ready.attr,
+	&dev_attr_nv_stub.attr,
 	&dev_attr_load.attr,
 	&dev_attr_load_gsm.attr,
 	&dev_attr_load_lte.attr,
@@ -449,6 +501,13 @@ static int ums9117_modem_probe(struct platform_device *pdev)
 	if (of_property_read_string(dev->of_node, "firmware-name-lte",
 				    &modem->lte.name))
 		modem->lte.name = "ums9117/lte_dsp.bin";
+
+	/* Optional pre-seeded value for the NV calibration word. The sysfs
+	 * attribute can still override it before "power_on" is written.
+	 */
+	if (!of_property_read_u32(dev->of_node, "fplinux,dsp-nv-stub",
+				  &modem->nv_stub))
+		modem->nv_stub_set = true;
 
 	platform_set_drvdata(pdev, modem);
 	ret = sysfs_create_groups(&dev->kobj, modem_groups);
