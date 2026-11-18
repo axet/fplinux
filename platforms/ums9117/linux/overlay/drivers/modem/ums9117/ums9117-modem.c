@@ -147,9 +147,39 @@ static int dsp_ready(struct ums9117_modem *modem)
 }
 
 /* Reproduce the AON/PMU sequence from the CP LTE ADX DSP init. */
-static int dsp_power_on(struct ums9117_modem *modem)
+/* The CP only asks the DSP for a ready reply, and polls the shared magic,
+ * when re-initialising an already-started DSP (FUN_81146c3a else branch).
+ * The cold-start branch performs the register sequence below and returns
+ * without touching the mailbox or the magic, so keep that handshake opt-in.
+ */
+static int dsp_handshake(struct ums9117_modem *modem)
 {
 	int ret, i;
+
+	if (!modem->shared_virt)
+		return -ENODEV;
+	if (!modem->dsp_chan) {
+		dev_warn(modem->dev,
+			 "no DSP mailbox channel; skipping start command\n");
+	} else {
+		u32 msg[2] = { 0, 0 };
+
+		ret = mbox_send_message(modem->dsp_chan, msg);
+		if (ret < 0)
+			return ret;
+	}
+
+	for (i = 0; i < DSP_READY_POLLS; i++) {
+		if (dsp_ready(modem))
+			return 0;
+		mdelay(DSP_READY_DELAY_MS);
+	}
+	return -ETIMEDOUT;
+}
+
+static int dsp_power_on(struct ums9117_modem *modem)
+{
+	int ret;
 
 	if (!modem->gsm_loaded || !modem->lte_loaded)
 		return -EINVAL;
@@ -201,30 +231,6 @@ static int dsp_power_on(struct ums9117_modem *modem)
 	if (ret)
 		return ret;
 
-	/* CP FUN_81146c3a's subsequent-init path asks the DSP (target 3) for a
-	 * ready reply before polling the magic. FUN_80e402a0(0,3) builds the
-	 * three-word message {3,0,0}; FUN_80ac33a6 writes ID=3, MSG_LOW=0,
-	 * MSG_HIGH=0 and TRIGGER=1 to the inbox registers. sprd_mbox_send_data()
-	 * performs the same writes for the channel-3 client with a {0,0} payload.
-	 */
-	if (modem->dsp_chan) {
-		u32 msg[2] = { 0, 0 };
-
-		ret = mbox_send_message(modem->dsp_chan, msg);
-		if (ret < 0)
-			return ret;
-	} else {
-		dev_warn(modem->dev,
-			 "no DSP mailbox channel; skipping start command\n");
-	}
-
-	/* Poll the magic only after the DSP is started and has been asked. */
-	for (i = 0; i < DSP_READY_POLLS; i++) {
-		if (dsp_ready(modem))
-			break;
-		mdelay(DSP_READY_DELAY_MS);
-	}
-
 	{
 		u32 aon_ctrl = 0, aon_vec = 0, pmu_clk = 0;
 		u32 shared_e00 = 0, shared_e04 = 0;
@@ -242,7 +248,10 @@ static int dsp_power_on(struct ums9117_modem *modem)
 			 readl(modem->shared_virt + DSP_READY_OFFSET),
 			 shared_e00, shared_e04, aon_ctrl, aon_vec, pmu_clk);
 	}
-	return dsp_ready(modem) ? 0 : -ETIMEDOUT;
+	/* Cold start is complete here: the CP does not wait for a ready magic
+	 * on the first boot path. Use the "handshake" attribute for the re-init
+	 * mailbox exchange if that reply is needed. */
+	return 0;
 }
 
 static ssize_t dsp_ready_show(struct device *dev, struct device_attribute *attr,
@@ -265,6 +274,20 @@ static ssize_t power_on_store(struct device *dev, struct device_attribute *attr,
 	if (!count || buf[0] != '1')
 		return count;
 	ret = dsp_power_on(modem);
+	if (ret)
+		return ret;
+	return count;
+}
+
+static ssize_t handshake_store(struct device *dev, struct device_attribute *attr,
+			       const char *buf, size_t count)
+{
+	struct ums9117_modem *modem = dev_get_drvdata(dev);
+	int ret;
+
+	if (!count || buf[0] != '1')
+		return count;
+	ret = dsp_handshake(modem);
 	if (ret)
 		return ret;
 	return count;
@@ -317,6 +340,7 @@ static DEVICE_ATTR_WO(load);
 static DEVICE_ATTR_WO(load_gsm);
 static DEVICE_ATTR_WO(load_lte);
 static DEVICE_ATTR_WO(power_on);
+static DEVICE_ATTR_WO(handshake);
 
 static struct attribute *modem_attrs[] = {
 	&dev_attr_loaded.attr,
@@ -325,6 +349,7 @@ static struct attribute *modem_attrs[] = {
 	&dev_attr_load_gsm.attr,
 	&dev_attr_load_lte.attr,
 	&dev_attr_power_on.attr,
+	&dev_attr_handshake.attr,
 	NULL,
 };
 ATTRIBUTE_GROUPS(modem);
