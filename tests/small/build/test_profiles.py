@@ -246,12 +246,17 @@ class GlobalProfileTests:
         }
 
     @pytest.mark.parametrize(
-        ("table", "group"), [("fm_radio", "fm-radio"), ("audio_profile", "audio-profile")]
+        ("table", "group"),
+        [
+            ("fm_radio", "fm-radio"),
+            ("audio_profile", "audio-profile"),
+            ("lte_calibration", "lte-calibration"),
+        ],
     )
-    def test_audio_and_fm_firmware_require_their_exact_size(
+    def test_fixed_size_firmware_groups_require_their_exact_size(
         self, profile_context: ProfileContext, table: str, group: str
     ) -> None:
-        """Audio and FM inputs cannot omit the size that device-data consumers verify."""
+        """Declared fixed-size firmware inputs cannot omit the size that consumers verify."""
         profile_context.write_target_manifest("first", "target-without-bluetooth.toml")
         path = profile_context.root / "targets/first/target.toml"
         base = path.read_text(encoding="utf-8")

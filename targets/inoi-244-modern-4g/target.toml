@@ -93,6 +93,12 @@ firmware = [
   { source = "inoi244-fm-config.bin", destination = "fplinux/inoi244-fm-config.bin", size = 128 },
 ]
 
+[lte_calibration]
+firmware = [
+  { source = "inoi244-lte-calibration-downloaded.bin", destination = "fplinux/inoi244-lte-calibration-downloaded.bin", size = 466616 },
+  { source = "inoi244-lte-calibration-protect.bin", destination = "fplinux/inoi244-lte-calibration-protect.bin", size = 466616 },
+]
+
 [microsd]
 linux_patches = []
 

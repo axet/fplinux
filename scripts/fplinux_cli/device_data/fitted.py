@@ -18,6 +18,10 @@ from fplinux_cli.device_data.formats import (
     PhysicalNand,
     fixed_nv_records,
 )
+from fplinux_cli.device_data.lte_calibration import (
+    LTE_CALIBRATION_RECORD_SIZES,
+    prepare_lte_calibration,
+)
 
 if TYPE_CHECKING:
     from fplinux_cli.device_data.formats import AudioProfileContext
@@ -29,6 +33,7 @@ def prepare_from_partitions(
     *,
     prefix: str,
     audio: AudioProfileContext,
+    include_lte_calibration: bool = False,
 ) -> DeviceDataPreparation:
     """Prepare shared fitted groups from one parse of each fixed-NV copy."""
     required_sizes = {
@@ -36,6 +41,8 @@ def prepare_from_partitions(
         **AUDIO_RECORD_SIZES,
         **FM_RECORD_SIZES,
     }
+    if include_lte_calibration:
+        required_sizes.update(LTE_CALIBRATION_RECORD_SIZES)
     downloaded = fixed_nv_records(
         nand.partition_bytes(partitions[DOWNLOADED_NV_PARTITION_ID]),
         required_sizes,
@@ -61,6 +68,11 @@ def prepare_from_partitions(
         headfree_headphones_only=audio.headfree_headphones_only,
     )
     fm_radio = prepare_fm_config(downloaded, protected, prefix=prefix)
-    return DeviceDataPreparation(
-        groups={"bluetooth": bluetooth, "audio-profile": audio_profile, "fm-radio": fm_radio}
-    )
+    groups = {
+        "bluetooth": bluetooth,
+        "audio-profile": audio_profile,
+        "fm-radio": fm_radio,
+    }
+    if include_lte_calibration:
+        groups["lte-calibration"] = prepare_lte_calibration(downloaded, protected, prefix=prefix)
+    return DeviceDataPreparation(groups=groups)

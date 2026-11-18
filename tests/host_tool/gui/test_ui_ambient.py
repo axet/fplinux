@@ -4,16 +4,13 @@
 from __future__ import annotations
 
 import json
-from typing import TYPE_CHECKING
+from typing import cast
 
 import pytest
 
 from tests import ROOT
 from tests.c_harness import c_build_directory, compile_c
 from tests.process import run_process
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 
 @pytest.fixture(scope="module")
@@ -36,7 +33,7 @@ def ambient(tmp_path_factory: pytest.TempPathFactory) -> dict[str, object]:
         result = run_process(
             [str(executable)], name="exercise ambient engine", timeout=10, check=True
         )
-        return json.loads(result.stdout)
+        return cast("dict[str, object]", json.loads(result.stdout))
 
 
 def test_scene_colour_and_breathing_effect(ambient: dict[str, object]) -> None:

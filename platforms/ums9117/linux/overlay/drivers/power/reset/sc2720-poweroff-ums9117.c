@@ -144,7 +144,8 @@ static int sc2720_power_off(struct sys_off_data *data)
 		dev_emerg(&poweroff->spi->dev, "fallback reset refused: %pe\n",
 			  ERR_PTR(ret));
 	mdelay(SC2720_FALLBACK_RESET_WAIT_MS);
-	dev_emerg(&poweroff->spi->dev, "fallback reset did not fire; halting\n");
+	dev_emerg(&poweroff->spi->dev,
+		  "fallback reset did not fire; halting\n");
 	sc2720_halt();
 }
 

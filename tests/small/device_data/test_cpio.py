@@ -61,10 +61,12 @@ def test_firmware_archive_extracts_exact_private_data_and_ignores_board_maps(
     bluetooth = b"controller\x00\x01"
     radio = b"radio\x02"
     profile = b"audio-profile\x00" * 1024
+    calibration = b"LTEC\x01\x00\x00\x00\x00\x00\x00\x00"
     groups = {
         "bluetooth": (_firmware("chip/controller.bin", bluetooth),),
         "fm-radio": (_firmware("radio.bin", radio),),
         "audio-profile": (_firmware("fplinux/profile.bin", profile),),
+        "lte-calibration": (_firmware("fplinux/lte.bin", calibration),),
         "board-maps": (_firmware("board.bin", b"board configuration"),),
     }
 
@@ -80,9 +82,11 @@ def test_firmware_archive_extracts_exact_private_data_and_ignores_board_maps(
         "lib/firmware/chip/controller.bin",
         "lib/firmware/radio.bin",
         "lib/firmware/fplinux/profile.bin.xz",
+        "lib/firmware/fplinux/lte.bin",
     }
     assert files["lib/firmware/chip/controller.bin"].read_bytes() == bluetooth
     assert files["lib/firmware/radio.bin"].read_bytes() == radio
+    assert files["lib/firmware/fplinux/lte.bin"].read_bytes() == calibration
     compressed = files["lib/firmware/fplinux/profile.bin.xz"].read_bytes()
     assert len(compressed) < len(profile)
     assert lzma.decompress(compressed, format=lzma.FORMAT_XZ) == profile

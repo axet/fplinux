@@ -27,4 +27,5 @@ def prepare_device_data(
         discover_partitions(nand, REQUIRED_BLUETOOTH_PARTITIONS).extents,
         prefix="inoi244",
         audio=audio,
+        include_lte_calibration=True,
     )

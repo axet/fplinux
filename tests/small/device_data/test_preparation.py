@@ -12,6 +12,7 @@ from fplinux_cli.device_data import (
 from fplinux_cli.device_data import (
     formats as device_data,
 )
+from fplinux_cli.device_data.lte_calibration import LTE_CALIBRATION_RECORD_SIZES
 
 from tests import ROOT
 from tests.small.device_data.audio_expected import (
@@ -25,6 +26,14 @@ from tests.small.device_data.nv_fixtures import fixed_records, nv1, running_nv
 from tests.small.device_data.partition_fixtures import vbm_table
 
 
+def lte_calibration_records() -> dict[int, bytes]:
+    """Build one deterministic fixed-NV record for every staged calibration identifier."""
+    return {
+        identifier: bytes([identifier & 0xFF]) * size
+        for identifier, size in LTE_CALIBRATION_RECORD_SIZES.items()
+    }
+
+
 class PartitionPreparationTests:
     """Exercise extraction and copy preservation on synthetic physical pages."""
 
@@ -34,6 +43,7 @@ class PartitionPreparationTests:
         protected_fm: bytes = bytes(range(128)),
         *,
         oob_bytes: int = 64,
+        include_lte_calibration: bool = False,
     ) -> tuple[
         device_data.PhysicalNand,
         dict[int, tuple[int, int]],
@@ -47,22 +57,28 @@ class PartitionPreparationTests:
             404: b"C" * 252,
             419: protected_fm,
         } | protected_audio
+        if include_lte_calibration:
+            calibration = lte_calibration_records()
+            downloaded_records |= calibration
+            protected_records |= calibration
         payloads = (
             original,
-            nv1(tuple(downloaded_records.items())),
-            nv1(tuple(protected_records.items())),
+            nv1(tuple(sorted(downloaded_records.items()))),
+            nv1(tuple(sorted(protected_records.items()))),
             running_nv(),
         )
-        main = b"".join(payload.ljust(131072, b"\xff") for payload in payloads)
+        blocks_per_partition = 8 if include_lte_calibration else 1
+        partition_size = blocks_per_partition * 131072
+        main = b"".join(payload.ljust(partition_size, b"\xff") for payload in payloads)
         raw = b"".join(
             main[offset : offset + 2048] + b"\xff" * oob_bytes
             for offset in range(0, len(main), 2048)
         )
         partitions = {
-            0x10000018: (0, 131072),
-            0x10000001: (131072, 131072),
-            0x1000000F: (262144, 131072),
-            0x10000003: (393216, 131072),
+            0x10000018: (0, partition_size),
+            0x10000001: (partition_size, partition_size),
+            0x1000000F: (2 * partition_size, partition_size),
+            0x10000003: (3 * partition_size, partition_size),
         }
         return device_data.PhysicalNand(raw, 2048 + oob_bytes), partitions
 
@@ -80,13 +96,32 @@ class PartitionPreparationTests:
         self, target: str, filename: str, prefix: str, oob_bytes: int
     ) -> None:
         """Target partition discovery retains the selected profile identity and topology."""
-        nand, _partitions = self._inputs(oob_bytes=oob_bytes)
+        include_lte_calibration = target == "inoi-244-modern-4g"
+        nand, _partitions = self._inputs(
+            oob_bytes=oob_bytes, include_lte_calibration=include_lte_calibration
+        )
+        blocks_per_partition = 8 if include_lte_calibration else 1
         table = vbm_table(
             (
-                (0x10000018, 0x100, 0, 0),
-                (0x10000001, 0x100, 1, 1),
-                (0x1000000F, 0x100, 2, 2),
-                (0x10000003, 1, 3, 3),
+                (0x10000018, 0x100, 0, blocks_per_partition - 1),
+                (
+                    0x10000001,
+                    0x100,
+                    blocks_per_partition,
+                    2 * blocks_per_partition - 1,
+                ),
+                (
+                    0x1000000F,
+                    0x100,
+                    2 * blocks_per_partition,
+                    3 * blocks_per_partition - 1,
+                ),
+                (
+                    0x10000003,
+                    1,
+                    3 * blocks_per_partition,
+                    4 * blocks_per_partition - 1,
+                ),
             )
         ).ljust(131072, b"\xff")
         table_raw = b"".join(

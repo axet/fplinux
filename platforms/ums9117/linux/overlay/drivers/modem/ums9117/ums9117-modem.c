@@ -41,26 +41,26 @@
 #define GSM_MAGIC "V1GGE_Bugid__990513_"
 
 /* AON_APB (0x402e0000) offsets touched by the CP LTE ADX DSP init. */
-#define AON_DSP_CTRL		0x24c	/* bit0 toggled around DSP start */
-#define AON_CLK_EB		0x130	/* bit16 = DSP clock enable */
-#define AON_DSP_VEC		0x248	/* DSP boot/vector value */
-#define AON_MISC_CFG		0x6c	/* OR 0x9620 during init */
+#define AON_DSP_CTRL 0x24c /* bit0 toggled around DSP start */
+#define AON_CLK_EB 0x130 /* bit16 = DSP clock enable */
+#define AON_DSP_VEC 0x248 /* DSP boot/vector value */
+#define AON_MISC_CFG 0x6c /* OR 0x9620 during init */
 
 /* PMU_APB (0x402b0000) offsets written by FUN_80c25904(1). */
-#define PMU_DSP_CLK_EB0		0x2044
-#define PMU_DSP_CFG		0x20cc
-#define PMU_DSP_CLK_EB1		0x2034
+#define PMU_DSP_CLK_EB0 0x2044
+#define PMU_DSP_CFG 0x20cc
+#define PMU_DSP_CLK_EB1 0x2034
 
 /* LTE DSP shared-memory page (0x80447000). */
 /* FUN_811c2414 writes the NV-derived configuration word here. */
-#define DSP_NV_STUB_OFFSET	0xe00
-#define DSP_READY_OFFSET	0xe14
-#define DSP_READY_MAGIC		0x22222222
-#define DSP_READY_POLLS		100
-#define DSP_READY_DELAY_MS	10
+#define DSP_NV_STUB_OFFSET 0xe00
+#define DSP_READY_OFFSET 0xe14
+#define DSP_READY_MAGIC 0x22222222
+#define DSP_READY_POLLS 100
+#define DSP_READY_DELAY_MS 10
 
 /* CP DAT_81147190 = 0x80448400; stored in AON_DSP_VEC as (addr >> 1). */
-#define DSP_VECTOR_VALUE	(0x80448400U >> 1)
+#define DSP_VECTOR_VALUE (0x80448400U >> 1)
 
 struct dsp_image {
 	const char *name;
@@ -100,12 +100,12 @@ static int load_one(struct ums9117_modem *modem, const struct dsp_image *img,
 		return ret;
 	}
 	if (fw->size <= img->header) {
-		dev_err(modem->dev, "%s too small (%zu)\n", img->name, fw->size);
+		dev_err(modem->dev, "%s too small (%zu)\n", img->name,
+			fw->size);
 		ret = -EINVAL;
 		goto out;
 	}
-	if (check_magic &&
-	    memcmp(fw->data, GSM_MAGIC, strlen(GSM_MAGIC))) {
+	if (check_magic && memcmp(fw->data, GSM_MAGIC, strlen(GSM_MAGIC))) {
 		dev_err(modem->dev, "%s bad magic\n", img->name);
 		ret = -EINVAL;
 		goto out;
@@ -120,9 +120,10 @@ static int load_one(struct ums9117_modem *modem, const struct dsp_image *img,
 	}
 
 	memcpy_toio(virt, payload, len);
-	memset_io((void __iomem *)((uintptr_t)virt + len), 0, img->region - len);
-	dev_info(modem->dev, "loaded %s: %zu bytes at %pa\n",
-		 img->name, len, &img->phys);
+	memset_io((void __iomem *)((uintptr_t)virt + len), 0,
+		  img->region - len);
+	dev_info(modem->dev, "loaded %s: %zu bytes at %pa\n", img->name, len,
+		 &img->phys);
 out:
 	release_firmware(fw);
 	return ret;
@@ -201,8 +202,7 @@ static int dsp_power_on(struct ums9117_modem *modem)
 	ret = regmap_update_bits(modem->aon_apb, AON_DSP_CTRL, BIT(0), 0);
 	if (ret)
 		return ret;
-	ret = regmap_update_bits(modem->aon_apb, AON_CLK_EB,
-				 BIT(16), BIT(16));
+	ret = regmap_update_bits(modem->aon_apb, AON_CLK_EB, BIT(16), BIT(16));
 	if (ret)
 		return ret;
 
@@ -229,15 +229,13 @@ static int dsp_power_on(struct ums9117_modem *modem)
 	}
 
 	/* Tail of FUN_81146dd8: interrupt/vector handshake. */
-	ret = regmap_update_bits(modem->aon_apb, AON_MISC_CFG,
-				 0x9620, 0x9620);
+	ret = regmap_update_bits(modem->aon_apb, AON_MISC_CFG, 0x9620, 0x9620);
 	if (ret)
 		return ret;
 	ret = regmap_update_bits(modem->aon_apb, AON_DSP_CTRL, BIT(0), 0);
 	if (ret)
 		return ret;
-	ret = regmap_update_bits(modem->aon_apb, AON_CLK_EB,
-				 BIT(16), BIT(16));
+	ret = regmap_update_bits(modem->aon_apb, AON_CLK_EB, BIT(16), BIT(16));
 	if (ret)
 		return ret;
 	ret = regmap_write(modem->aon_apb, AON_DSP_VEC, DSP_VECTOR_VALUE);
@@ -257,17 +255,20 @@ static int dsp_power_on(struct ums9117_modem *modem)
 		regmap_read(modem->aon_apb, AON_DSP_CTRL, &aon_ctrl);
 		regmap_read(modem->aon_apb, AON_DSP_VEC, &aon_vec);
 		regmap_read(modem->pmu_apb, PMU_DSP_CLK_EB1, &pmu_clk);
-		dev_info(modem->dev,
-			 "DSP power-on done; ready=%d magic=0x%08x stub=0x%08x\n",
-			 dsp_ready(modem),
-			 readl(modem->shared_virt + DSP_READY_OFFSET), stub);
-		dev_info(modem->dev,
-			 "DSP power-on regs: aon[24c]=0x%08x aon[248]=0x%08x pmu[2034]=0x%08x\n",
-			 aon_ctrl, aon_vec, pmu_clk);
+		dev_info(
+			modem->dev,
+			"DSP power-on done; ready=%d magic=0x%08x stub=0x%08x\n",
+			dsp_ready(modem),
+			readl(modem->shared_virt + DSP_READY_OFFSET), stub);
+		dev_info(
+			modem->dev,
+			"DSP power-on regs: aon[24c]=0x%08x aon[248]=0x%08x pmu[2034]=0x%08x\n",
+			aon_ctrl, aon_vec, pmu_clk);
 	}
 	/* Cold start is complete here: the CP does not wait for a ready magic
 	 * on the first boot path. Use the "handshake" attribute for the re-init
-	 * mailbox exchange if that reply is needed. */
+	 * mailbox exchange if that reply is needed.
+	 */
 	return 0;
 }
 
@@ -329,8 +330,9 @@ static ssize_t power_on_store(struct device *dev, struct device_attribute *attr,
 	return count;
 }
 
-static ssize_t handshake_store(struct device *dev, struct device_attribute *attr,
-			       const char *buf, size_t count)
+static ssize_t handshake_store(struct device *dev,
+			       struct device_attribute *attr, const char *buf,
+			       size_t count)
 {
 	struct ums9117_modem *modem = dev_get_drvdata(dev);
 	int ret;
@@ -432,13 +434,14 @@ static int ums9117_modem_probe(struct platform_device *pdev)
 
 	/* A bulk image copy into System RAM would corrupt the running kernel and
 	 * hard-reset the phone. Refuse to probe unless both DSP windows are
-	 * excluded from System RAM (the DTB memory node must start above them). */
+	 * excluded from System RAM (the DTB memory node must start above them).
+	 */
 	if (region_intersects(modem->gsm.phys, modem->gsm.region,
-			      IORESOURCE_SYSTEM_RAM, IORES_DESC_NONE) !=
-	    REGION_DISJOINT ||
+			      IORESOURCE_SYSTEM_RAM,
+			      IORES_DESC_NONE) != REGION_DISJOINT ||
 	    region_intersects(modem->lte.phys, modem->lte.region,
-			      IORESOURCE_SYSTEM_RAM, IORES_DESC_NONE) !=
-	    REGION_DISJOINT)
+			      IORESOURCE_SYSTEM_RAM,
+			      IORES_DESC_NONE) != REGION_DISJOINT)
 		return dev_err_probe(dev, -EBUSY,
 				     "DSP regions overlap System RAM\n");
 
@@ -447,7 +450,8 @@ static int ums9117_modem_probe(struct platform_device *pdev)
 	 * (and readl() of the ready magic is not served from a stale cache line).
 	 * devm_ioremap_resource() cannot be used because the reserved-memory nodes
 	 * already own these ranges, but the ranges are now outside System RAM so
-	 * plain devm_ioremap() succeeds. */
+	 * plain devm_ioremap() succeeds.
+	 */
 	modem->gsm_virt = devm_ioremap(dev, modem->gsm.phys, modem->gsm.region);
 	if (!modem->gsm_virt)
 		return -ENOMEM;
@@ -458,8 +462,8 @@ static int ums9117_modem_probe(struct platform_device *pdev)
 	/* LTE DSP shared-memory page holds the ready magic at +0xe14. */
 	res = platform_get_resource_byname(pdev, IORESOURCE_MEM, "dsp-shared");
 	if (res) {
-		modem->shared_virt = devm_ioremap(dev, res->start,
-						  resource_size(res));
+		modem->shared_virt =
+			devm_ioremap(dev, res->start, resource_size(res));
 		if (!modem->shared_virt)
 			return -ENOMEM;
 	}
@@ -476,8 +480,8 @@ static int ums9117_modem_probe(struct platform_device *pdev)
 
 	/* CP LTE ADX registers target 3 (MBOX_DSP_CMD) for the ready exchange. */
 	modem->mbox_client.dev = dev;
-	modem->dsp_chan = mbox_request_channel_byname(&modem->mbox_client,
-						     "dsp");
+	modem->dsp_chan =
+		mbox_request_channel_byname(&modem->mbox_client, "dsp");
 	if (IS_ERR(modem->dsp_chan)) {
 		ret = PTR_ERR(modem->dsp_chan);
 		dev_warn(dev, "DSP mailbox channel unavailable: %d\n", ret);
@@ -487,11 +491,13 @@ static int ums9117_modem_probe(struct platform_device *pdev)
 	{
 		u32 header;
 
-		modem->gsm.header = 0x80;   /* V1GGE_Bugid header */
-		modem->lte.header = 0;      /* raw CEVA image */
-		if (!of_property_read_u32(dev->of_node, "fplinux,gsm-header", &header))
+		modem->gsm.header = 0x80; /* V1GGE_Bugid header */
+		modem->lte.header = 0; /* raw CEVA image */
+		if (!of_property_read_u32(dev->of_node, "fplinux,gsm-header",
+					  &header))
 			modem->gsm.header = header;
-		if (!of_property_read_u32(dev->of_node, "fplinux,lte-header", &header))
+		if (!of_property_read_u32(dev->of_node, "fplinux,lte-header",
+					  &header))
 			modem->lte.header = header;
 	}
 

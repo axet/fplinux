@@ -68,6 +68,7 @@ _RADIO_MODULES = (
     "device_data/cm4.py",
     "device_data/fitted.py",
     "device_data/fm_radio.py",
+    "device_data/lte_calibration.py",
 )
 
 
@@ -143,7 +144,7 @@ def preparation_source_files(
     selected = list(_PREPARATION_MODULES)
     if config.get("emmc") is not None:
         selected.extend(_EMMC_MODULES)
-    if {"bluetooth", "fm-radio"} & groups.keys():
+    if {"bluetooth", "fm-radio", "lte-calibration"} & groups.keys():
         selected.extend(_RADIO_MODULES)
     if {"bluetooth", "wcn-firmware"} & groups.keys():
         selected.append("device_data/running_nv.py")

@@ -734,11 +734,11 @@ static void ambient_apply(void *context,
 					  lv_color_hex(ambient_hex(halo)), 0);
 		lv_obj_set_style_bg_opa(ui->ambient_strips[zone][1],
 					(lv_opa_t)(opacity / 3), 0);
-		lv_obj_set_style_bg_color(ui->ambient_strips[zone][0],
-					  lv_color_hex(ambient_hex(
-						  frame->zone[zone])),
-					  0);
-		lv_obj_set_style_bg_opa(ui->ambient_strips[zone][0], opacity, 0);
+		lv_obj_set_style_bg_color(
+			ui->ambient_strips[zone][0],
+			lv_color_hex(ambient_hex(frame->zone[zone])), 0);
+		lv_obj_set_style_bg_opa(ui->ambient_strips[zone][0], opacity,
+					0);
 		lv_obj_invalidate(ui->ambient_strips[zone][1]);
 		lv_obj_invalidate(ui->ambient_strips[zone][0]);
 	}
@@ -770,17 +770,15 @@ static void ambient_layout(struct fplinux_ui *ui)
 				zone == FPLINUX_AMBIENT_RIGHT;
 
 		lv_obj_set_pos(ui->ambient_strips[zone][0],
-			       vertical ? x[zone] : 0,
-			       vertical ? 0 : y[zone]);
+			       vertical ? x[zone] : 0, vertical ? 0 : y[zone]);
 		lv_obj_set_size(ui->ambient_strips[zone][0],
 				vertical ? core : width,
 				vertical ? height : core);
 		lv_obj_set_pos(ui->ambient_strips[zone][1],
-			       vertical ?
-				       (zone == FPLINUX_AMBIENT_RIGHT ?
-						width - halo :
-						0) :
-				       0,
+			       vertical ? (zone == FPLINUX_AMBIENT_RIGHT ?
+						   width - halo :
+						   0) :
+					  0,
 			       vertical ? 0 :
 					  (zone == FPLINUX_AMBIENT_BOTTOM ?
 						   height - halo :

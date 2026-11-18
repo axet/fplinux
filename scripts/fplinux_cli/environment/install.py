@@ -65,9 +65,10 @@ def _extract_archive(
 
 def _apk_add(selectors: Sequence[str]) -> None:
     """Install APK packages, tolerating unmapped setuid ownership warnings."""
-
     command = ["apk", "add", "--no-network", "--no-cache", *selectors]
-    result = subprocess.run(command, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    result = subprocess.run(
+        command, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, check=False
+    )
     if result.stdout:
         print(result.stdout, end="")
     if result.returncode == 0:

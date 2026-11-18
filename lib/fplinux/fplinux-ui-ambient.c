@@ -343,15 +343,15 @@ void fplinux_ambient_tick(struct fplinux_ambient *ambient, uint64_t now_ms)
 
 		target = ambient->overridden[zone] ? ambient->override[zone] :
 						     spec->zone[zone];
-		ambient->frame.zone[zone].r =
-			mix(ambient->from[zone].r, target.r, elapsed,
-			    AMBIENT_TRANSITION_MS);
-		ambient->frame.zone[zone].g =
-			mix(ambient->from[zone].g, target.g, elapsed,
-			    AMBIENT_TRANSITION_MS);
-		ambient->frame.zone[zone].b =
-			mix(ambient->from[zone].b, target.b, elapsed,
-			    AMBIENT_TRANSITION_MS);
+		ambient->frame.zone[zone].r = mix(ambient->from[zone].r,
+						  target.r, elapsed,
+						  AMBIENT_TRANSITION_MS);
+		ambient->frame.zone[zone].g = mix(ambient->from[zone].g,
+						  target.g, elapsed,
+						  AMBIENT_TRANSITION_MS);
+		ambient->frame.zone[zone].b = mix(ambient->from[zone].b,
+						  target.b, elapsed,
+						  AMBIENT_TRANSITION_MS);
 		ambient->frame.intensity[zone] =
 			effect_intensity(ambient, zone, phase);
 	}

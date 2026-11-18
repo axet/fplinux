@@ -63,12 +63,12 @@
 			compatible = "fplinux,ums9117-modem";
 			reg = <0x80100000 0x00300000>, <0x80448000 0x002e4000>,
 			      <0x80447000 0x00001000>;
-			reg-names = "dsp-gsm", "dsp-lte", "dsp-shared";
 			firmware-name-gsm = "ums9117/gsm_dsp.bin";
 			firmware-name-lte = "ums9117/lte_dsp.bin";
 			/* CP FUN_81146dd8 registers target 3 (MBOX_DSP_CMD). */
 			mbox-names = "dsp";
 			mboxes = <&mailbox 3>;
+			reg-names = "dsp-gsm", "dsp-lte", "dsp-shared";
 			fplinux,aon-apb = <&aon_apb>;
 			fplinux,pmu-apb = <&pmu_apb>;
 		};

@@ -193,13 +193,25 @@ def run_checkpatch(command: list[str]) -> None:
         fail(message)
 
 
+# GNU make can observe a generated dtbs-list file a fraction of a second after
+# the make clock was sampled and report a clock skew. Those two lines describe
+# the race itself, not a device-tree finding; every other diagnostic stays fatal.
+_ENVIRONMENTAL_DTBS_WARNING = re.compile(
+    r"(?m)^make(?:\[\d+\])?: Warning: File '[^']+' has modification time "
+    r"[0-9.]+ s in the future\n"
+    r"|^make(?:\[\d+\])?: warning:  Clock skew detected\.  "
+    r"Your build may be incomplete\.\n"
+)
+
+
 def run_dtbs_check(command: list[str], target: str) -> str:
-    """Run dtbs_check and return its combined diagnostic output."""
+    """Run dtbs_check and return its real diagnostic output."""
     report = capture_text(command)
     if report.returncode:
         record_text(f"dtbs_check exited {report.returncode}: {target}\n")
         raise SystemExit(exit_status(report.returncode))
-    return report.stdout + report.stderr
+    combined = report.stdout + report.stderr
+    return _ENVIRONMENTAL_DTBS_WARNING.sub("", combined)
 
 
 def check_bindings(

@@ -51,7 +51,6 @@ def _builder_ownership_supported(path: Path) -> bool:
     account.  Probe once close to the real target so ordinary filesystems keep
     the original non-root build path.
     """
-
     global _BUILDER_OWNERSHIP_SUPPORTED  # noqa: PLW0603 -- one cached filesystem probe.
     if _BUILDER_OWNERSHIP_SUPPORTED is not None:
         return _BUILDER_OWNERSHIP_SUPPORTED

@@ -33,6 +33,59 @@ static struct {
 static struct spi_controller *registered_controller;
 static struct resource adi_resource = { .start = 0x40380000,
 					.end = 0x4038ffff };
+static struct kobject test_kernel_kobj;
+
+struct kobject *kernel_kobj = &test_kernel_kobj;
+
+struct kobject *kobject_create_and_add(const char *name, struct kobject *parent)
+{
+	assert(name);
+	(void)parent;
+	return &test_kernel_kobj;
+}
+
+void kobject_put(struct kobject *kobj)
+{
+	assert(kobj == &test_kernel_kobj);
+}
+
+int sysfs_create_file(struct kobject *kobj, const struct attribute *attr)
+{
+	assert(kobj == &test_kernel_kobj);
+	assert(attr);
+	return 0;
+}
+
+void sysfs_remove_file(struct kobject *kobj, const struct attribute *attr)
+{
+	assert(kobj == &test_kernel_kobj);
+	assert(attr);
+}
+
+int register_reboot_notifier(struct notifier_block *nb)
+{
+	assert(nb);
+	return 0;
+}
+
+void unregister_reboot_notifier(struct notifier_block *nb)
+{
+	assert(nb);
+}
+
+int devm_add_action_or_reset(struct device *dev, void (*action)(void *),
+			     void *data)
+{
+	(void)dev;
+	(void)action;
+	(void)data;
+	return 0;
+}
+
+void msleep(unsigned int delay)
+{
+	(void)delay;
+}
 
 const void *of_device_get_match_data(const struct device *dev)
 {

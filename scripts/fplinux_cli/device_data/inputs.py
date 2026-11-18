@@ -49,6 +49,7 @@ def rootfs_firmware_inputs(
     return (
         *device_data.get("bluetooth", ()),
         *device_data.get("fm-radio", ()),
+        *device_data.get("lte-calibration", ()),
         *device_data.get("wcn-firmware", ()),
     )
 

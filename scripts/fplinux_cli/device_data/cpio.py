@@ -28,7 +28,13 @@ def create_device_data_initramfs(
         fail(f"unsupported USB transport: {usb_transport}")
 
     files: dict[str, bytes] = {}
-    for group in ("bluetooth", "fm-radio", "audio-profile", "wcn-firmware"):
+    for group in (
+        "bluetooth",
+        "fm-radio",
+        "audio-profile",
+        "lte-calibration",
+        "wcn-firmware",
+    ):
         for firmware in groups.get(group, ()):
             stored_name, contents = firmware_storage(firmware)
             path = f"lib/firmware/{stored_name}"

@@ -254,6 +254,7 @@ def load_target(
             *({"bluetooth"} if "bluetooth" in raw else set()),
             *({"audio_profile"} if "audio_profile" in raw else set()),
             *({"fm_radio"} if "fm_radio" in raw else set()),
+            *({"lte_calibration"} if "lte_calibration" in raw else set()),
             *({"wcn_firmware"} if "wcn_firmware" in raw else set()),
             *({"loader"} if "loader" in raw else set()),
             *({"nand"} if "nand" in raw else set()),
@@ -466,6 +467,12 @@ def load_target(
         device_data_groups["fm-radio"] = firmware_array(
             fm_radio["firmware"],
             "target FM radio firmware",
+        )
+    if "lte_calibration" in config:
+        lte = exact_table(config.pop("lte_calibration"), {"firmware"}, "target LTE calibration")
+        device_data_groups["lte-calibration"] = firmware_array(
+            lte["firmware"],
+            "target LTE calibration firmware",
         )
     if "wcn_firmware" in config:
         wcn = exact_table(config.pop("wcn_firmware"), {"firmware"}, "target WCN firmware")

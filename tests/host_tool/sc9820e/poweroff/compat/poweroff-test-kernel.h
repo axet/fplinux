@@ -12,6 +12,8 @@
 typedef uint16_t u16;
 typedef uint32_t u32;
 typedef uint32_t __be32;
+typedef int ssize_t;
+typedef unsigned short umode_t;
 typedef unsigned long resource_size_t;
 typedef unsigned int raw_spinlock_t;
 
@@ -31,6 +33,9 @@ typedef unsigned int raw_spinlock_t;
 #define SZ_128K 131072U
 #define SPI_CONTROLLER_HALF_DUPLEX 1U
 #define NOTIFY_DONE 0
+#define SYS_RESTART 1
+#define container_of(ptr, type, member) \
+	((type *)((char *)(ptr) - offsetof(type, member)))
 #define ERR_PTR(error) ((void *)(intptr_t)(error))
 #define PTR_ERR(pointer) ((int)(intptr_t)(pointer))
 #define IS_ERR(pointer) ((uintptr_t)(pointer) >= (uintptr_t)-4095)
@@ -117,6 +122,36 @@ struct sys_off_data {
 	const char *cmd;
 };
 
+struct attribute {
+	const char *name;
+	umode_t mode;
+};
+
+struct kobject;
+struct kobj_attribute {
+	struct attribute attr;
+	ssize_t (*show)(struct kobject *kobj, struct kobj_attribute *attr,
+			char *buf);
+	ssize_t (*store)(struct kobject *kobj, struct kobj_attribute *attr,
+			 const char *buf, size_t count);
+};
+
+struct kobject {
+	const char *name;
+};
+
+struct notifier_block {
+	int (*notifier_call)(struct notifier_block *nb, unsigned long action,
+			     void *data);
+	int priority;
+	struct notifier_block *next;
+};
+
+extern struct kobject *kernel_kobj;
+
+#define __ATTR_WO(_name) \
+	{ .attr = { .name = #_name, .mode = 0200 }, .store = _name##_store }
+
 const void *of_device_get_match_data(const struct device *dev);
 int of_alias_get_id(struct device_node *node, const char *alias);
 unsigned int of_get_child_count(struct device_node *node);
@@ -143,6 +178,15 @@ int devm_register_restart_handler(struct device *dev,
 				  int (*callback)(struct sys_off_data *),
 				  void *data);
 int dev_err_probe(struct device *dev, int error, const char *format, ...);
+int register_reboot_notifier(struct notifier_block *nb);
+void unregister_reboot_notifier(struct notifier_block *nb);
+int devm_add_action_or_reset(struct device *dev, void (*action)(void *),
+			     void *data);
+struct kobject *kobject_create_and_add(const char *name,
+				       struct kobject *parent);
+void kobject_put(struct kobject *kobj);
+int sysfs_create_file(struct kobject *kobj, const struct attribute *attr);
+void sysfs_remove_file(struct kobject *kobj, const struct attribute *attr);
 int hwspin_lock_timeout_irqsave(struct hwspinlock *lock, unsigned int timeout,
 				unsigned long *flags);
 void hwspin_unlock_irqrestore(struct hwspinlock *lock, unsigned long *flags);
@@ -154,6 +198,7 @@ u32 readl_relaxed(const void *address);
 void writel_relaxed(u32 value, void *address);
 void udelay(unsigned long delay);
 void mdelay(unsigned long delay);
+void msleep(unsigned int delay);
 void cpu_relax(void);
 
 #define readl(address) readl_relaxed(address)
