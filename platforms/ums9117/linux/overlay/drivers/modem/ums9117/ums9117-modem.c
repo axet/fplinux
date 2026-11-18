@@ -23,7 +23,6 @@
 #include <linux/ioport.h>
 #include <linux/mailbox_client.h>
 #include <linux/mfd/syscon.h>
-#include <linux/memremap.h>
 #include <linux/mm.h>
 #include <linux/module.h>
 #include <linux/of.h>
@@ -226,10 +225,23 @@ static int dsp_power_on(struct ums9117_modem *modem)
 		mdelay(DSP_READY_DELAY_MS);
 	}
 
-	dev_info(modem->dev,
-		 "DSP power-on done; ready=%d magic=0x%08x\n",
-		 dsp_ready(modem),
-		 readl(modem->shared_virt + DSP_READY_OFFSET));
+	{
+		u32 aon_ctrl = 0, aon_vec = 0, pmu_clk = 0;
+		u32 shared_e00 = 0, shared_e04 = 0;
+
+		regmap_read(modem->aon_apb, AON_DSP_CTRL, &aon_ctrl);
+		regmap_read(modem->aon_apb, AON_DSP_VEC, &aon_vec);
+		regmap_read(modem->pmu_apb, PMU_DSP_CLK_EB1, &pmu_clk);
+		shared_e00 = readl(modem->shared_virt + 0xe00);
+		shared_e04 = readl(modem->shared_virt + 0xe04);
+		dev_info(modem->dev,
+			 "DSP power-on done; ready=%d magic=0x%08x "
+			 "shared[e00]=0x%08x shared[e04]=0x%08x "
+			 "aon[24c]=0x%08x aon[248]=0x%08x pmu[2034]=0x%08x\n",
+			 dsp_ready(modem),
+			 readl(modem->shared_virt + DSP_READY_OFFSET),
+			 shared_e00, shared_e04, aon_ctrl, aon_vec, pmu_clk);
+	}
 	return dsp_ready(modem) ? 0 : -ETIMEDOUT;
 }
 
@@ -353,23 +365,24 @@ static int ums9117_modem_probe(struct platform_device *pdev)
 		return dev_err_probe(dev, -EBUSY,
 				     "DSP regions overlap System RAM\n");
 
-	/* The DT reserved-memory node already owns these regions. They are SRAM,
-	 * not MMIO devices, so map them as normal memory; ioremap(MT_DEVICE) is
-	 * rejected for addresses memblock still reports as mapped RAM. */
-	modem->gsm_virt = (void __iomem *)devm_memremap(dev, modem->gsm.phys,
-			modem->gsm.region, MEMREMAP_WB);
+	/* The DSP regions are SRAM shared with another processor, not ordinary
+	 * kernel memory. Map them uncached so memcpy_toio() writes reach the SRAM
+	 * (and readl() of the ready magic is not served from a stale cache line).
+	 * devm_ioremap_resource() cannot be used because the reserved-memory nodes
+	 * already own these ranges, but the ranges are now outside System RAM so
+	 * plain devm_ioremap() succeeds. */
+	modem->gsm_virt = devm_ioremap(dev, modem->gsm.phys, modem->gsm.region);
 	if (!modem->gsm_virt)
 		return -ENOMEM;
-	modem->lte_virt = (void __iomem *)devm_memremap(dev, modem->lte.phys,
-			modem->lte.region, MEMREMAP_WB);
+	modem->lte_virt = devm_ioremap(dev, modem->lte.phys, modem->lte.region);
 	if (!modem->lte_virt)
 		return -ENOMEM;
 
 	/* LTE DSP shared-memory page holds the ready magic at +0xe14. */
 	res = platform_get_resource_byname(pdev, IORESOURCE_MEM, "dsp-shared");
 	if (res) {
-		modem->shared_virt = (void __iomem *)devm_memremap(
-			dev, res->start, resource_size(res), MEMREMAP_WB);
+		modem->shared_virt = devm_ioremap(dev, res->start,
+						  resource_size(res));
 		if (!modem->shared_virt)
 			return -ENOMEM;
 	}
