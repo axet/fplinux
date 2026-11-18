@@ -7,6 +7,9 @@ struct spi_device;
 /* Final SC2720 power-off: no sleeping SPI queue after device shutdown. */
 int sprd_adi_sc2720_power_off(struct spi_device *spi);
 
+/* Reset the SoC from the sys-off path if power-off did not drop the rails. */
+int sprd_adi_sc2720_watchdog_reset(struct spi_device *spi);
+
 /* Final SC2721 power-off through r3p0 ADI, with local IRQs disabled. */
 int sprd_adi_sc2721_power_off(struct spi_device *spi);
 

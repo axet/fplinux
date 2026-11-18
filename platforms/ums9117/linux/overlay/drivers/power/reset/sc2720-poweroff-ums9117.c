@@ -20,7 +20,8 @@
 #define SC2720_CHIP_ID_HIGH 0xc04U
 #define SC2720_EXPECTED_ID_LOW 0xa003U
 #define SC2720_EXPECTED_ID_HIGH 0x2720U
-#define SC2720_POWER_OFF_WAIT_MS 50U
+#define SC2720_POWER_OFF_WAIT_MS 1000U
+#define SC2720_FALLBACK_RESET_WAIT_MS 1500U
 #define SC2720_POWER_KEY_HOLD_MS 5000U
 
 struct sc2720_poweroff {
@@ -128,11 +129,22 @@ static int sc2720_power_off(struct sys_off_data *data)
 	if (ret)
 		dev_emerg(&poweroff->spi->dev, "power-off refused: %pe\n",
 			  ERR_PTR(ret));
-	else {
+	else
 		mdelay(SC2720_POWER_OFF_WAIT_MS);
-		dev_emerg(&poweroff->spi->dev,
-			  "power-off write completed but CPU still runs\n");
-	}
+
+	/*
+	 * Reaching here means the PMIC did not cut the rails.  Halting here
+	 * looked like a random freeze; reset the SoC instead so the phone is
+	 * recoverable, while the PMIC register readback above records why.
+	 */
+	dev_emerg(&poweroff->spi->dev,
+		  "power-off did not cut PMIC rails; resetting\n");
+	ret = sprd_adi_sc2720_watchdog_reset(poweroff->spi);
+	if (ret)
+		dev_emerg(&poweroff->spi->dev, "fallback reset refused: %pe\n",
+			  ERR_PTR(ret));
+	mdelay(SC2720_FALLBACK_RESET_WAIT_MS);
+	dev_emerg(&poweroff->spi->dev, "fallback reset did not fire; halting\n");
 	sc2720_halt();
 }
 

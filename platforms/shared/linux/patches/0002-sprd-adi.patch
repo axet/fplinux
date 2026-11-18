@@ -212,7 +212,7 @@ diff --git a/drivers/spi/spi-sprd-adi.c b/drivers/spi/spi-sprd-adi.c
  	} else if (t->tx_buf) {
  		u32 *p = (u32 *)t->tx_buf;
  		reg = *p++;
-@@ -352,9 +440,52 @@
+@@ -352,9 +440,70 @@
  		ret = -EINVAL;
  	}
  
@@ -227,13 +227,16 @@ diff --git a/drivers/spi/spi-sprd-adi.c b/drivers/spi/spi-sprd-adi.c
 +/* The final sys-off notifier cannot sleep in the SPI message queue. */
 +int sprd_adi_sc2720_power_off(struct spi_device *spi)
 +{
-+	/* Same register sequence as the mainline SC27xx power-off driver. */
++	/* SC27xx power-down sequence; SLP_CTRL bits are cleared, not set. */
 +#define SC27XX_SLP_CTRL		0xdf0
 +#define SC27XX_LDO_XTL_EN	BIT(3)
++#define SC27XX_SLP_LDO_PD_EN	BIT(0)
++#define SC27XX_SLP_CTRL_MASK	(SC27XX_LDO_XTL_EN | SC27XX_SLP_LDO_PD_EN)
 +#define SC27XX_PWR_PD_HW	0xc2c
 +#define SC27XX_PWR_OFF_EN	BIT(0)
 +	struct sprd_adi *sadi = spi_controller_get_devdata(spi->controller);
 +	unsigned long flags;
++	u32 slp_ctrl;
 +	u32 value;
 +	int ret;
 +	int end_ret;
@@ -250,13 +253,28 @@ diff --git a/drivers/spi/spi-sprd-adi.c b/drivers/spi/spi-sprd-adi.c
 +		ret = sprd_adi_read(sadi, 0xc04, &value);
 +	if (!ret && value != 0x2720)
 +		ret = -ENODEV;
-+	/* Disable the external subsystem connection before cutting power. */
++	/* Disable external subsystem power before cutting the main rails. */
 +	if (!ret)
-+		ret = sprd_adi_write(sadi, SC27XX_SLP_CTRL, SC27XX_LDO_XTL_EN);
++		ret = sprd_adi_read(sadi, SC27XX_SLP_CTRL, &slp_ctrl);
 +	if (!ret)
-+		ret = sprd_adi_write(sadi, SC27XX_PWR_PD_HW, SC27XX_PWR_OFF_EN);
++		ret = sprd_adi_write(sadi, SC27XX_SLP_CTRL,
++				     slp_ctrl & ~SC27XX_SLP_CTRL_MASK);
 +	if (!ret)
++		ret = sprd_adi_write(sadi, SC27XX_PWR_PD_HW,
++				     SC27XX_PWR_OFF_EN);
++	if (!ret) {
++		u32 pwr_pd_hw;
++
 +		ret = sprd_adi_drain_fifo(sadi);
++		if (!ret)
++			ret = sprd_adi_read(sadi, SC27XX_SLP_CTRL, &value);
++		if (!ret)
++			ret = sprd_adi_read(sadi, SC27XX_PWR_PD_HW, &pwr_pd_hw);
++		if (!ret)
++			dev_emerg(sadi->dev,
++				  "SC2720 power-off: slp_ctrl=0x%x->0x%x pwr_pd_hw=0x%x\n",
++				  slp_ctrl, value, pwr_pd_hw);
++	}
 +	end_ret = sprd_adi_user_unlock(sadi, flags);
 +	return ret ? ret : end_ret;
 +}
@@ -265,7 +283,7 @@ diff --git a/drivers/spi/spi-sprd-adi.c b/drivers/spi/spi-sprd-adi.c
  static void sprd_adi_set_wdt_rst_mode(void *p)
  {
  #if IS_ENABLED(CONFIG_SPRD_WATCHDOG)
-@@ -456,6 +587,192 @@
+@@ -456,6 +587,218 @@
  	return sprd_adi_restart(data->cb_data, data->mode, data->cmd, &wdg);
  }
  
@@ -281,7 +299,8 @@ diff --git a/drivers/spi/spi-sprd-adi.c b/drivers/spi/spi-sprd-adi.c
 + * and fdl/src/main.c).  Everything runs under the ADI user lock because the
 + * final sys-off notifier must not sleep in the SPI message queue.
 + */
-+static int sprd_adi_arm_bootrom_reset(struct sprd_adi *sadi, const char *cmd)
++static int sprd_adi_arm_watchdog_reset(struct sprd_adi *sadi, bool autodl,
++				       const char *label)
 +{
 +#define UMS9117_PMIC_RST_MONITOR	0xe24U
 +#define UMS9117_RST_REASON_SHIFT	4U
@@ -298,9 +317,6 @@ diff --git a/drivers/spi/spi-sprd-adi.c b/drivers/spi/spi-sprd-adi.c
 +	int ret;
 +	int end_ret;
 +
-+	if (!cmd || (strncmp(cmd, "autodloader", 11) &&
-+		     strncmp(cmd, "bootrom", 7)))
-+		return NOTIFY_DONE;
 +	if (!sadi->data->user_lock)
 +		return -EOPNOTSUPP;
 +
@@ -309,11 +325,16 @@ diff --git a/drivers/spi/spi-sprd-adi.c b/drivers/spi/spi-sprd-adi.c
 +		return ret;
 +
 +	/* Stock SML checks bits [8:4] for the 0x17 auto-download reason. */
-+	ret = sprd_adi_read(sadi, UMS9117_PMIC_RST_MONITOR, &value);
-+	if (!ret) {
-+		value &= ~(UMS9117_RST_REASON_MASK << UMS9117_RST_REASON_SHIFT);
-+		value |= UMS9117_RST_REASON_AUTODL << UMS9117_RST_REASON_SHIFT;
-+		ret = sprd_adi_write(sadi, UMS9117_PMIC_RST_MONITOR, value);
++	if (autodl) {
++		ret = sprd_adi_read(sadi, UMS9117_PMIC_RST_MONITOR, &value);
++		if (!ret) {
++			value &= ~(UMS9117_RST_REASON_MASK <<
++				   UMS9117_RST_REASON_SHIFT);
++			value |= UMS9117_RST_REASON_AUTODL <<
++				 UMS9117_RST_REASON_SHIFT;
++			ret = sprd_adi_write(sadi, UMS9117_PMIC_RST_MONITOR,
++					     value);
++		}
 +	}
 +
 +	/* The PMIC watchdog clocks are bit 2 on UMS9117/SC2720. */
@@ -365,11 +386,12 @@ diff --git a/drivers/spi/spi-sprd-adi.c b/drivers/spi/spi-sprd-adi.c
 +
 +		if (!sprd_adi_read(sadi, UMS9117_WDG_BASE + REG_WDG_CTRL,
 +				   &dbg))
-+			dev_emerg(sadi->dev,
-+				  "BootROM watchdog ctrl=0x%x\n", dbg);
++			dev_emerg(sadi->dev, "%s watchdog ctrl=0x%x\n",
++				  label, dbg);
 +		if (!sprd_adi_read(sadi, UMS9117_PMIC_RST_MONITOR, &dbg))
 +			dev_emerg(sadi->dev,
-+				  "BootROM reset reason=0x%x (raw=0x%x)\n",
++				  "%s reset reason=0x%x (raw=0x%x)\n",
++				  label,
 +				  (dbg >> UMS9117_RST_REASON_SHIFT) &
 +				  UMS9117_RST_REASON_MASK, dbg);
 +	}
@@ -378,8 +400,21 @@ diff --git a/drivers/spi/spi-sprd-adi.c b/drivers/spi/spi-sprd-adi.c
 +	if (!ret)
 +		ret = end_ret;
 +	if (ret)
-+		dev_emerg(sadi->dev, "BootROM reboot failed: %d\n", ret);
++		dev_emerg(sadi->dev, "%s watchdog arm failed: %d\n", label, ret);
 +	else
++		dev_emerg(sadi->dev, "%s watchdog armed\n", label);
++	return ret;
++}
++
++static int sprd_adi_arm_bootrom_reset(struct sprd_adi *sadi, const char *cmd)
++{
++	int ret;
++
++	if (!cmd || (strncmp(cmd, "autodloader", 11) &&
++		     strncmp(cmd, "bootrom", 7)))
++		return NOTIFY_DONE;
++	ret = sprd_adi_arm_watchdog_reset(sadi, true, "BootROM");
++	if (!ret)
 +		dev_emerg(sadi->dev, "Rebooting into BootROM download mode\n");
 +
 +	/*
@@ -389,8 +424,17 @@ diff --git a/drivers/spi/spi-sprd-adi.c b/drivers/spi/spi-sprd-adi.c
 +	 * readback above is observable before the PMIC drops the SoC.
 +	 */
 +	msleep(1500);
-+	return NOTIFY_DONE;
++	return ret;
 +}
++
++/* Last resort if the power-off write does not drop the rails: reset instead. */
++int sprd_adi_sc2720_watchdog_reset(struct spi_device *spi)
++{
++	struct sprd_adi *sadi = spi_controller_get_devdata(spi->controller);
++
++	return sprd_adi_arm_watchdog_reset(sadi, false, "Power-off fallback");
++}
++EXPORT_SYMBOL_GPL(sprd_adi_sc2720_watchdog_reset);
 +
 +static int sprd_adi_restart_ums9117(struct sys_off_data *data)
 +{
