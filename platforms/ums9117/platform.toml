@@ -517,7 +517,10 @@ wait_seconds = 300
 vendor_id = 0x0525
 product_id = 0xa4a6
 keyboard_interface = 0
-wait_seconds = 60
+# This phone occasionally takes ~90s to enumerate Linux USB-NCM after a cold
+# RAM load. The default 60s marked a healthy boot as failed and discarded the
+# session keys, leaving an inaccessible phone. Give it a generous window.
+wait_seconds = 240
 
 [host]
 [host.runtime_tools]
