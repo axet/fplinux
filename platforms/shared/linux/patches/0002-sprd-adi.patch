@@ -265,14 +265,16 @@ diff --git a/drivers/spi/spi-sprd-adi.c b/drivers/spi/spi-sprd-adi.c
  static void sprd_adi_set_wdt_rst_mode(void *p)
  {
  #if IS_ENABLED(CONFIG_SPRD_WATCHDOG)
-@@ -456,6 +587,180 @@
+@@ -456,6 +587,192 @@
  	return sprd_adi_restart(data->cb_data, data->mode, data->cmd, &wdg);
  }
  
 +/*
 + * Reboot straight into the BootROM download mode.  The stock key sequence is
-+ * only one way to enter it: the BootROM also checks PMIC_RST_STATUS after a
-+ * full PMIC watchdog reset.  HWRST_STATUS_AUTODLOADER is that reset reason.
++ * only one way to enter it: stock SML enters auto download after a PMIC
++ * watchdog reset when PMIC_RST_MONITOR (0xe24) bits [8:4] hold 0x17.  The
++ * generic PMIC_RST_STATUS (0xee8) value HWRST_STATUS_AUTODLOADER is ignored
++ * by this phone.
 + *
 + * UMS9117's PMIC watchdog is at base 0x40, not the sc9860 0x80 used by the
 + * generic restart helper, and the clocks are 0xc08/0xc10 (see fdl/src/entry.c
@@ -281,7 +283,10 @@ diff --git a/drivers/spi/spi-sprd-adi.c b/drivers/spi/spi-sprd-adi.c
 + */
 +static int sprd_adi_arm_bootrom_reset(struct sprd_adi *sadi, const char *cmd)
 +{
-+#define UMS9117_PMIC_RST_STATUS	0xee8U
++#define UMS9117_PMIC_RST_MONITOR	0xe24U
++#define UMS9117_RST_REASON_SHIFT	4U
++#define UMS9117_RST_REASON_MASK	0x1fU
++#define UMS9117_RST_REASON_AUTODL	0x17U
 +#define UMS9117_PMIC_MODULE_EN	0xc08U
 +#define UMS9117_PMIC_RTC_EN	0xc10U
 +#define UMS9117_WDG_BASE	0x40U
@@ -303,12 +308,12 @@ diff --git a/drivers/spi/spi-sprd-adi.c b/drivers/spi/spi-sprd-adi.c
 +	if (ret)
 +		return ret;
 +
-+	/* Clear the normal/watchdog reset reason and request download mode. */
-+	ret = sprd_adi_read(sadi, UMS9117_PMIC_RST_STATUS, &value);
++	/* Stock SML checks bits [8:4] for the 0x17 auto-download reason. */
++	ret = sprd_adi_read(sadi, UMS9117_PMIC_RST_MONITOR, &value);
 +	if (!ret) {
-+		value &= ~HWRST_STATUS_WATCHDOG;
-+		value |= HWRST_STATUS_AUTODLOADER;
-+		ret = sprd_adi_write(sadi, UMS9117_PMIC_RST_STATUS, value);
++		value &= ~(UMS9117_RST_REASON_MASK << UMS9117_RST_REASON_SHIFT);
++		value |= UMS9117_RST_REASON_AUTODL << UMS9117_RST_REASON_SHIFT;
++		ret = sprd_adi_write(sadi, UMS9117_PMIC_RST_MONITOR, value);
 +	}
 +
 +	/* The PMIC watchdog clocks are bit 2 on UMS9117/SC2720. */
@@ -362,9 +367,11 @@ diff --git a/drivers/spi/spi-sprd-adi.c b/drivers/spi/spi-sprd-adi.c
 +				   &dbg))
 +			dev_emerg(sadi->dev,
 +				  "BootROM watchdog ctrl=0x%x\n", dbg);
-+		if (!sprd_adi_read(sadi, UMS9117_PMIC_RST_STATUS, &dbg))
++		if (!sprd_adi_read(sadi, UMS9117_PMIC_RST_MONITOR, &dbg))
 +			dev_emerg(sadi->dev,
-+				  "BootROM reset status=0x%x\n", dbg);
++				  "BootROM reset reason=0x%x (raw=0x%x)\n",
++				  (dbg >> UMS9117_RST_REASON_SHIFT) &
++				  UMS9117_RST_REASON_MASK, dbg);
 +	}
 +
 +	end_ret = sprd_adi_user_unlock(sadi, flags);
@@ -375,8 +382,13 @@ diff --git a/drivers/spi/spi-sprd-adi.c b/drivers/spi/spi-sprd-adi.c
 +	else
 +		dev_emerg(sadi->dev, "Rebooting into BootROM download mode\n");
 +
-+	/* One second at 32.768 kHz; give USB and the PMIC time to reset. */
-+	mdelay(1500);
++	/*
++	 * One second at 32.768 kHz; give USB and the PMIC time to reset.
++	 * Both callers are process context (blocking reboot notifier or sysfs
++	 * store).  Sleeping here also lets the kernel log reader run, so the
++	 * readback above is observable before the PMIC drops the SoC.
++	 */
++	msleep(1500);
 +	return NOTIFY_DONE;
 +}
 +
@@ -446,7 +458,7 @@ diff --git a/drivers/spi/spi-sprd-adi.c b/drivers/spi/spi-sprd-adi.c
  static void sprd_adi_hw_init(struct sprd_adi *sadi)
  {
  	struct device_node *np = sadi->dev->of_node;
-@@ -463,6 +768,9 @@
+@@ -463,6 +780,9 @@
  	const __be32 *list;
  	u32 tmp;
  
@@ -456,7 +468,7 @@ diff --git a/drivers/spi/spi-sprd-adi.c b/drivers/spi/spi-sprd-adi.c
  	/* Set all channels as default priority */
  	writel_relaxed(0, sadi->base + REG_ADI_CHN_PRIL);
  	writel_relaxed(0, sadi->base + REG_ADI_CHN_PRIH);
-@@ -539,19 +847,86 @@
+@@ -539,19 +859,86 @@
  	if (IS_ERR(sadi->base))
  		return PTR_ERR(sadi->base);
  
@@ -543,7 +555,7 @@ diff --git a/drivers/spi/spi-sprd-adi.c b/drivers/spi/spi-sprd-adi.c
  		switch (ret) {
  		case 0:
  			/*
-@@ -593,6 +968,13 @@
+@@ -593,6 +980,13 @@
  	return 0;
  }
  
@@ -557,7 +569,7 @@ diff --git a/drivers/spi/spi-sprd-adi.c b/drivers/spi/spi-sprd-adi.c
  static struct sprd_adi_data sc9860_data = {
  	.slave_offset = ADI_10BIT_SLAVE_OFFSET,
  	.slave_addr_size = ADI_10BIT_SLAVE_ADDR_SIZE,
-@@ -601,6 +983,14 @@
+@@ -601,6 +995,14 @@
  	.wdg_rst = sprd_adi_set_wdt_rst_mode,
  };
  
@@ -572,7 +584,7 @@ diff --git a/drivers/spi/spi-sprd-adi.c b/drivers/spi/spi-sprd-adi.c
  static struct sprd_adi_data sc9863_data = {
  	.slave_offset = ADI_12BIT_SLAVE_OFFSET,
  	.slave_addr_size = ADI_12BIT_SLAVE_ADDR_SIZE,
-@@ -615,6 +1005,14 @@
+@@ -615,6 +1017,14 @@
  
  static const struct of_device_id sprd_adi_of_match[] = {
  	{
@@ -587,7 +599,7 @@ diff --git a/drivers/spi/spi-sprd-adi.c b/drivers/spi/spi-sprd-adi.c
  		.compatible = "sprd,sc9860-adi",
  		.data = &sc9860_data,
  	},
-@@ -626,7 +1024,7 @@
+@@ -626,7 +1036,7 @@
  		.compatible = "sprd,ums512-adi",
  		.data = &ums512_data,
  	},
