@@ -21,6 +21,7 @@
 #include <linux/firmware.h>
 #include <linux/io.h>
 #include <linux/ioport.h>
+#include <linux/mailbox_client.h>
 #include <linux/mfd/syscon.h>
 #include <linux/memremap.h>
 #include <linux/mm.h>
@@ -69,6 +70,8 @@ struct ums9117_modem {
 	void __iomem *shared_virt;
 	struct regmap *aon_apb;
 	struct regmap *pmu_apb;
+	struct mbox_client mbox_client;
+	struct mbox_chan *dsp_chan;
 	bool gsm_loaded;
 	bool lte_loaded;
 };
@@ -177,13 +180,6 @@ static int dsp_power_on(struct ums9117_modem *modem)
 	if (ret)
 		return ret;
 
-	/* FUN_81146c3a: poll the DSP ready magic (CP does 100 x 10 ms). */
-	for (i = 0; i < DSP_READY_POLLS; i++) {
-		if (dsp_ready(modem))
-			break;
-		mdelay(DSP_READY_DELAY_MS);
-	}
-
 	/* Tail of FUN_81146dd8: interrupt/vector handshake. */
 	ret = regmap_update_bits(modem->aon_apb, AON_MISC_CFG,
 				 0x9620, 0x9620);
@@ -205,6 +201,30 @@ static int dsp_power_on(struct ums9117_modem *modem)
 	ret = regmap_update_bits(modem->aon_apb, AON_CLK_EB, BIT(16), 0);
 	if (ret)
 		return ret;
+
+	/* CP FUN_81146c3a's subsequent-init path asks the DSP (target 3) for a
+	 * ready reply before polling the magic. FUN_80e402a0(0,3) builds the
+	 * three-word message {3,0,0}; FUN_80ac33a6 writes ID=3, MSG_LOW=0,
+	 * MSG_HIGH=0 and TRIGGER=1 to the inbox registers. sprd_mbox_send_data()
+	 * performs the same writes for the channel-3 client with a {0,0} payload.
+	 */
+	if (modem->dsp_chan) {
+		u32 msg[2] = { 0, 0 };
+
+		ret = mbox_send_message(modem->dsp_chan, msg);
+		if (ret < 0)
+			return ret;
+	} else {
+		dev_warn(modem->dev,
+			 "no DSP mailbox channel; skipping start command\n");
+	}
+
+	/* Poll the magic only after the DSP is started and has been asked. */
+	for (i = 0; i < DSP_READY_POLLS; i++) {
+		if (dsp_ready(modem))
+			break;
+		mdelay(DSP_READY_DELAY_MS);
+	}
 
 	dev_info(modem->dev,
 		 "DSP power-on done; ready=%d magic=0x%08x\n",
@@ -302,6 +322,7 @@ static int ums9117_modem_probe(struct platform_device *pdev)
 	struct device *dev = &pdev->dev;
 	struct ums9117_modem *modem;
 	struct resource *res;
+	int ret;
 
 	modem = devm_kzalloc(dev, sizeof(*modem), GFP_KERNEL);
 	if (!modem)
@@ -363,6 +384,16 @@ static int ums9117_modem_probe(struct platform_device *pdev)
 	if (IS_ERR(modem->pmu_apb))
 		modem->pmu_apb = NULL;
 
+	/* CP LTE ADX registers target 3 (MBOX_DSP_CMD) for the ready exchange. */
+	modem->mbox_client.dev = dev;
+	modem->dsp_chan = mbox_request_channel_byname(&modem->mbox_client,
+						     "dsp");
+	if (IS_ERR(modem->dsp_chan)) {
+		ret = PTR_ERR(modem->dsp_chan);
+		dev_warn(dev, "DSP mailbox channel unavailable: %d\n", ret);
+		modem->dsp_chan = NULL;
+	}
+
 	{
 		u32 header;
 
@@ -382,12 +413,19 @@ static int ums9117_modem_probe(struct platform_device *pdev)
 		modem->lte.name = "ums9117/lte_dsp.bin";
 
 	platform_set_drvdata(pdev, modem);
-	return sysfs_create_groups(&dev->kobj, modem_groups);
+	ret = sysfs_create_groups(&dev->kobj, modem_groups);
+	if (ret && modem->dsp_chan)
+		mbox_free_channel(modem->dsp_chan);
+	return ret;
 }
 
 static void ums9117_modem_remove(struct platform_device *pdev)
 {
+	struct ums9117_modem *modem = platform_get_drvdata(pdev);
+
 	sysfs_remove_groups(&pdev->dev.kobj, modem_groups);
+	if (modem->dsp_chan)
+		mbox_free_channel(modem->dsp_chan);
 }
 
 static const struct of_device_id ums9117_modem_of_match[] = {
