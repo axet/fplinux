@@ -517,10 +517,10 @@ wait_seconds = 300
 vendor_id = 0x0525
 product_id = 0xa4a6
 keyboard_interface = 0
-# This phone occasionally takes ~90s to enumerate Linux USB-NCM after a cold
-# RAM load. The default 60s marked a healthy boot as failed and discarded the
-# session keys, leaving an inaccessible phone. Give it a generous window.
-wait_seconds = 240
+# The phone enumerates Linux USB-NCM promptly after a cold RAM load. If the
+# gadget does not reattach to the VM, the fix is to reattach/manually remount
+# USB, not to wait longer: a longer window only hides the VM passthrough issue.
+wait_seconds = 60
 
 [host]
 [host.runtime_tools]
