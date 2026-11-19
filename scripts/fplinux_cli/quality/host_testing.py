@@ -56,7 +56,10 @@ def host_pytest_environment(
         fail("host namespace tests require Python 3.14")
     cache = data_root(ROOT) if cache is None else cache
     with reporter.stage("host-namespace") as stage:
-        stage.run(["unshare", "--map-auto", "--map-root-user", "--", "true"], timeout=30)
+        # Root does not need user-namespace mapping; the pinned BusyBox unshare
+        # also lacks --map-auto. Keep the stage for log continuity only.
+        if os.geteuid() != 0:
+            stage.run(["unshare", "--map-auto", "--map-root-user", "--", "true"], timeout=30)
     with tempfile.TemporaryDirectory(
         prefix="fplinux-host-python-",
         dir="/tmp",  # Mapped users cannot traverse private checkout ancestors.

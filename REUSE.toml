@@ -9,6 +9,7 @@ path = [
   ".editorconfig",
   ".gitattributes",
   ".githooks/**",
+  ".gitleaks.toml",
   ".github/**",
   ".gitignore",
   ".markdownlint-cli2.jsonc",

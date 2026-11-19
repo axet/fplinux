@@ -505,6 +505,8 @@ def userspace_c_include_flags(source: str) -> list[str]:
         flags.extend(pkg_config_cflags("dbus-1"))
     if source == "lib/fplinux/fplinux-input-session.c":
         flags.extend(pkg_config_cflags("libevdev"))
+    if path.parts[:3] == (*APORT_ROOT, "fplinux-contacts"):
+        flags.extend(("-I", "alpine/aports/fplinux-libcontacts"))
     shared = registration.SHARED_APORT_SOURCES.get(path.parent.name, ())
     uses_gpu = source in registration.GPU_OUTPUT_SOURCES or (
         "include/fplinux/fplinux-gpu.h" in shared

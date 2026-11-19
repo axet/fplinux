@@ -120,6 +120,7 @@ static const char *const message_names[] = {
 	[FPLINUX_UI_SESSION_DOCUMENT_RESULT] = "DOCUMENT_RESULT",
 	[FPLINUX_UI_SESSION_STORAGE_REQUEST] = "STORAGE_REQUEST",
 	[FPLINUX_UI_SESSION_STORAGE_RESULT] = "STORAGE_RESULT",
+	[FPLINUX_UI_SESSION_MODEM] = "MODEM",
 };
 
 static const char *const volume_operation_names[] = {
@@ -194,6 +195,7 @@ static const char *const field_names[] = {
 	"value",
 	"battery",
 	"charging",
+	"modem",
 	"notice",
 	"screen_width",
 	"screen_height",
@@ -425,6 +427,60 @@ static bool get_clock_presentation(struct json_object *object,
 		return false;
 	clock->alarm_utc = alarm_utc;
 	return true;
+}
+
+static bool modem_valid(const struct fplinux_ui_session_modem *modem)
+{
+	size_t length =
+		strnlen(modem->operator_name, sizeof(modem->operator_name));
+
+	if (modem->signal < -1 || modem->signal > 5 ||
+	    length == sizeof(modem->operator_name))
+		return false;
+	for (size_t i = 0; i < length; ++i)
+		if ((unsigned char)modem->operator_name[i] < 0x20 ||
+		    modem->operator_name[i] == 0x7f)
+			return false;
+	return true;
+}
+
+static void add_modem(struct json_object *object,
+		      const struct fplinux_ui_session_modem *modem)
+{
+	struct json_object *state = json_object_new_object();
+
+	json_object_object_add(state, "signal",
+			       json_object_new_int(modem->signal));
+	json_object_object_add(state, "operator_name",
+			       json_object_new_string(modem->operator_name));
+	json_object_object_add(object, "modem", state);
+}
+
+static bool get_modem(struct json_object *object, unsigned int type,
+		      struct fplinux_ui_session_message *message)
+{
+	struct json_object *state, *value;
+
+	if (!json_object_object_get_ex(object, "modem", &state))
+		return type != FPLINUX_UI_SESSION_MODEM;
+	if ((type != FPLINUX_UI_SESSION_ACTIVE &&
+	     type != FPLINUX_UI_SESSION_MODEM) ||
+	    !json_object_is_type(state, json_type_object))
+		return false;
+	json_object_object_foreach(state, name, field)
+	{
+		(void)field;
+		if (strcmp(name, "signal") && strcmp(name, "operator_name"))
+			return false;
+	}
+	if (!json_object_object_get_ex(state, "signal", &value) ||
+	    !json_object_object_get_ex(state, "operator_name", &value))
+		return false;
+	if (!get_int(state, "signal", &message->modem.signal) ||
+	    !get_string(state, "operator_name", message->modem.operator_name,
+			sizeof(message->modem.operator_name)))
+		return false;
+	return modem_valid(&message->modem);
 }
 
 /* Finds name in a table; an empty name selects fallback. */
@@ -1124,8 +1180,8 @@ bool fplinux_ui_session_send(int fd,
 	    !input_locale_valid(message->input_locale) ||
 	    !clock_data_valid(message->clock_data) ||
 	    !clock_presentation_valid(message) ||
-	    !storage_result_valid(message) || !document_fields_valid(message) ||
-	    !volume_fields_valid(message) ||
+	    !modem_valid(&message->modem) || !storage_result_valid(message) ||
+	    !document_fields_valid(message) || !volume_fields_valid(message) ||
 	    ((message->audio || message->vibration) &&
 	     message->type != FPLINUX_UI_SESSION_CONFIG) ||
 	    ((message->pattern_count || message->repeat) &&
@@ -1174,6 +1230,9 @@ bool fplinux_ui_session_send(int fd,
 	add_string(object, "clock", message->clock_data);
 	if (message->type == FPLINUX_UI_SESSION_ACTIVE)
 		add_clock_presentation(object, &message->clock_presentation);
+	if (message->type == FPLINUX_UI_SESSION_ACTIVE ||
+	    message->type == FPLINUX_UI_SESSION_MODEM)
+		add_modem(object, &message->modem);
 	add_string(object, "type", message_names[message->type]);
 	if (message->type == FPLINUX_UI_SESSION_STORAGE_REQUEST ||
 	    message->type == FPLINUX_UI_SESSION_STORAGE_RESULT) {
@@ -1428,6 +1487,8 @@ int fplinux_ui_session_receive(int fd,
 	if (received < 0)
 		return -1;
 	memset(message, 0, sizeof(*message));
+	/* An ACTIVE without a modem object carries no signal measurement. */
+	message->modem.signal = -1;
 	/* musl's CMSG_NXTHDR() compares a size with a pointer difference. */
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wsign-compare"
@@ -1550,6 +1611,8 @@ int fplinux_ui_session_receive(int fd,
 		valid = get_clock(object, type, message->clock_data);
 	if (valid)
 		valid = get_clock_presentation(object, type, message);
+	if (valid)
+		valid = get_modem(object, type, message);
 	if (valid)
 		valid = get_media_fields(object, type, message);
 	if (valid)

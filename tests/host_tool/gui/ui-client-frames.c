@@ -766,6 +766,13 @@ application_document(struct fplinux_ui *ui,
 	};
 
 	assert(!fplinux_ui_send(ui, &bypass) && errno == EINVAL);
+	struct fplinux_ui_session_message manager_modem = {
+		.type = FPLINUX_UI_SESSION_MODEM,
+		.modem = { .signal = -1 },
+	};
+
+	errno = 0;
+	assert(!fplinux_ui_send(ui, &manager_modem) && errno == EINVAL);
 	application->document_request = request->request_id;
 	paint(ui, application->document_wait ? 0xffff00 : 0x00ff00);
 	assert(write(application->control, "a", 1) == 1);

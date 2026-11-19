@@ -21,7 +21,8 @@ struct fplinux_session_storage_config;
  * The optional system paths select the persisted settings file, the language
  * files that define the system languages, the brightness service socket, the
  * LED class directory searched for the keypad light, the power-supply class
- * directory polled for chargers and the RTC. NULL disables that boundary;
+ * directory polled for chargers, the modem status directory polled for signal
+ * and operator, and the RTC. NULL disables that boundary;
  * without language files the system language is the built-in English.
  * clock_ms returns
  * CLOCK_MONOTONIC milliseconds; NULL selects the system clock.
@@ -49,6 +50,8 @@ struct fplinux_session_options {
 	const char *brightness_socket;
 	const char *leds_dir;
 	const char *power_supply_dir;
+	/* Directory with signal_level and operator_name sysfs attributes. */
+	const char *modem_dir;
 	const char *rtc_path;
 	/* Playback capability uses the installed service and playback node. */
 	const char *audio_socket;

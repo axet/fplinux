@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 #define _GNU_SOURCE
 #include "session-core.h"
+#include "session-modem.h"
 #include "session-settings.h"
 #include "session-storage.h"
 #include "session-wireless.h"
@@ -109,6 +110,9 @@ struct fixture {
 	char power_supply[PATH_MAX];
 	char battery_capacity[PATH_MAX];
 	char charger_online[PATH_MAX];
+	char modem[PATH_MAX];
+	char modem_signal[PATH_MAX];
+	char modem_operator[PATH_MAX];
 	struct fplinux_session_storage_config storage;
 	char storage_blocks[PATH_MAX];
 	char storage_mountinfo[PATH_MAX];
@@ -837,6 +841,16 @@ static struct fixture *create_fixture(const char *root, int width, int height,
 		path_join(fixture->charger_online, supply, "online");
 		write_file(fixture->charger_online, "0\n");
 	}
+	if (getenv("FPLINUX_TEST_MODEM")) {
+		path_join(fixture->modem, root, "modem");
+		CHECK(mkdir(fixture->modem, 0700) == 0);
+		path_join(fixture->modem_signal, fixture->modem,
+			  "signal_level");
+		path_join(fixture->modem_operator, fixture->modem,
+			  "operator_name");
+		write_file(fixture->modem_signal, "-1\n");
+		write_file(fixture->modem_operator, "\n");
+	}
 	path_join(fixture->clock_preferences, root, "clocks");
 	if (getenv("FPLINUX_TEST_STORAGE")) {
 		path_join(fixture->storage_blocks, root, "storage-blocks");
@@ -877,6 +891,8 @@ static struct fixture *create_fixture(const char *root, int width, int height,
 		.leds_dir = keypad_max ? fixture->leds : NULL,
 		.power_supply_dir =
 			battery_percent >= 0 ? fixture->power_supply : NULL,
+		.modem_dir = getenv("FPLINUX_TEST_MODEM") ? fixture->modem :
+							    NULL,
 		.clock_signal_path = getenv("FPLINUX_TEST_CLOCK_SIGNAL_FILE") ?
 					     "/proc/self/exe" :
 					     NULL,
@@ -1072,7 +1088,9 @@ static void acknowledge(struct fixture *fixture, struct peer *launcher,
 	issue(fixture, launcher, &ack);
 }
 
-static struct peer *start_launcher(struct fixture *fixture)
+static struct peer *
+start_launcher_recording(struct fixture *fixture,
+			 struct fplinux_ui_session_message *initial)
 {
 	struct peer *launcher = wait_peer(fixture, TEST_LAUNCHER);
 	struct fplinux_ui_session_message config =
@@ -1095,8 +1113,15 @@ static struct peer *start_launcher(struct fixture *fixture)
 	struct fplinux_ui_session_message active =
 		active_for(fixture, launcher, "");
 
+	if (initial)
+		*initial = active;
 	acknowledge(fixture, launcher, &active);
 	return launcher;
+}
+
+static struct peer *start_launcher(struct fixture *fixture)
+{
+	return start_launcher_recording(fixture, NULL);
 }
 
 static void test_startup_frame_before_ready(struct fixture *fixture)
@@ -3779,6 +3804,66 @@ static void test_surface_box(struct fixture *fixture, int top, int app_height)
 	      height == fixture->height);
 }
 
+static void test_modem_status(struct fixture *fixture)
+{
+	struct fplinux_ui_session_message initial;
+	struct fplinux_ui_session_message active;
+	struct fplinux_ui_session_message modem;
+	struct peer *launcher = start_launcher_recording(fixture, &initial);
+	struct peer *app;
+
+	CHECK(initial.modem.signal == -1 && !initial.modem.operator_name[0]);
+	clear_messages(fixture, launcher);
+	write_file(fixture->modem_signal, "3\n");
+	write_file(fixture->modem_operator, "Operator\n");
+	fixture->now_ms += FPLINUX_SESSION_MODEM_POLL_MS;
+	active = wait_message(fixture, launcher, FPLINUX_UI_SESSION_ACTIVE,
+			      NULL);
+	CHECK(active.modem.signal == 3 &&
+	      !strcmp(active.modem.operator_name, "Operator"));
+	acknowledge(fixture, launcher, &active);
+	clear_messages(fixture, launcher);
+
+	/* A non-launcher receives the current snapshot when it connects. */
+	app = show_app(fixture, launcher, TEST_APP);
+	modem = wait_message(fixture, app, FPLINUX_UI_SESSION_MODEM, NULL);
+	CHECK(modem.modem.signal == 3 &&
+	      !strcmp(modem.modem.operator_name, "Operator"));
+	CHECK(!take_message(launcher, FPLINUX_UI_SESSION_MODEM, NULL, &modem));
+	clear_messages(fixture, app);
+
+	write_file(fixture->modem_signal, "1\n");
+	write_file(fixture->modem_operator, "Next\n");
+	fixture->now_ms += FPLINUX_SESSION_MODEM_POLL_MS;
+	active = wait_message(fixture, launcher, FPLINUX_UI_SESSION_ACTIVE,
+			      NULL);
+	CHECK(active.modem.signal == 1 &&
+	      !strcmp(active.modem.operator_name, "Next"));
+	modem = wait_message(fixture, app, FPLINUX_UI_SESSION_MODEM, NULL);
+	CHECK(modem.modem.signal == 1 &&
+	      !strcmp(modem.modem.operator_name, "Next"));
+	CHECK(!take_message(launcher, FPLINUX_UI_SESSION_MODEM, NULL, &modem));
+	acknowledge(fixture, launcher, &active);
+	clear_messages(fixture, launcher);
+	clear_messages(fixture, app);
+
+	/* No clock advance: an unchanged snapshot republishes nothing. */
+	pump(fixture, 10);
+	CHECK(!take_message(launcher, FPLINUX_UI_SESSION_ACTIVE, NULL,
+			    &active));
+	CHECK(!take_message(app, FPLINUX_UI_SESSION_MODEM, NULL, &modem));
+
+	write_file(fixture->modem_signal, "9\n");
+	write_file(fixture->modem_operator, "Ignored\n");
+	fixture->now_ms += FPLINUX_SESSION_MODEM_POLL_MS;
+	active = wait_message(fixture, launcher, FPLINUX_UI_SESSION_ACTIVE,
+			      NULL);
+	CHECK(active.modem.signal == -1 && !active.modem.operator_name[0]);
+	modem = wait_message(fixture, app, FPLINUX_UI_SESSION_MODEM, NULL);
+	CHECK(modem.modem.signal == -1 && !modem.modem.operator_name[0]);
+	acknowledge(fixture, launcher, &active);
+}
+
 static void test_battery_charger_wake(struct fixture *fixture,
 				      const char *capacity, int percent,
 				      const char *notice)
@@ -5352,6 +5437,8 @@ int main(int argc, char **argv)
 
 	if (!strcmp(argv[1], "clock-reset-rtc"))
 		current_time = 0;
+	if (!strcmp(argv[1], "modem-status"))
+		CHECK(setenv("FPLINUX_TEST_MODEM", "1", 1) == 0);
 	if (!strcmp(argv[1], "clock-signal-lifetime") ||
 	    !strcmp(argv[1], "media-clock-owner")) {
 		path_join(signal_path, argv[2], "signal-log");
@@ -5581,6 +5668,8 @@ int main(int argc, char **argv)
 	else if (!strcmp(argv[1], "battery-charger-wake-critical"))
 		test_battery_charger_wake(fixture, "3\n", 3,
 					  "battery-critical");
+	else if (!strcmp(argv[1], "modem-status"))
+		test_modem_status(fixture);
 	else if (!strcmp(argv[1], "surface-box") && argc == 7)
 		test_surface_box(fixture, atoi(argv[5]), atoi(argv[6]));
 	else

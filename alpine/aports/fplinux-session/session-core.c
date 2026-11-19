@@ -32,6 +32,7 @@
 #include "session-audio.h"
 #include "session-battery.h"
 #include "session-clock.h"
+#include "session-modem.h"
 #include "session-power.h"
 #include "session-settings.h"
 #include "session-storage.h"
@@ -274,6 +275,9 @@ struct fplinux_session {
 	int active_battery;
 	bool active_charging;
 	enum fplinux_session_battery_alert active_battery_notice;
+	/* Relayed, never inferred from DSP state. -1/empty means unknown. */
+	struct fplinux_ui_session_modem modem;
+	uint64_t modem_poll_ms;
 	struct fplinux_brightness_client brightness;
 	unsigned int user_level;
 	/*
@@ -1085,6 +1089,7 @@ static void send_active(struct fplinux_session *session)
 			fplinux_session_battery_percent(&session->battery) :
 			-1;
 	message.charging = session->charger_online;
+	message.modem = session->modem;
 	message.theme = session->settings.theme;
 	clock_wire_ring_from_model(&session->clock.model, &ring);
 	clock_wire_ring_encode(&ring, ring.event.id, message.clock_data,
@@ -1998,6 +2003,46 @@ static void poll_power(struct fplinux_session *session, uint64_t time)
 					       time);
 	}
 	check_battery(session);
+}
+
+/* ACTIVE remains launcher-only; other consumers receive a typed MODEM. */
+static void send_modem_to(struct fplinux_session *session,
+			  struct process *process,
+			  const struct fplinux_ui_session_modem *modem)
+{
+	struct fplinux_ui_session_message message;
+
+	if (!process || process == &session->launcher || !is_running(process) ||
+	    process->control_fd < 0 || process->policy.closing)
+		return;
+	memset(&message, 0, sizeof(message));
+	message.type = FPLINUX_UI_SESSION_MODEM;
+	message.modem = *modem;
+	fplinux_ui_session_send(process->control_fd, &message);
+}
+
+static void publish_modem(struct fplinux_session *session)
+{
+	for (unsigned int i = 1; i <= FPLINUX_UI_SESSION_TASK_MAX; ++i)
+		send_modem_to(session, process_at(session, i), &session->modem);
+}
+
+/*
+ * The modem status source has no uevent. Read its bounded class attributes at
+ * a fixed interval; a missing or invalid sample leaves both values unknown.
+ */
+static void poll_modem(struct fplinux_session *session, uint64_t time)
+{
+	struct fplinux_ui_session_modem state;
+
+	if (!session->options.modem_dir || time < session->modem_poll_ms)
+		return;
+	session->modem_poll_ms = time + FPLINUX_SESSION_MODEM_POLL_MS;
+	fplinux_session_modem_read(session->options.modem_dir, &state);
+	if (!memcmp(&state, &session->modem, sizeof(state)))
+		return;
+	session->modem = state;
+	publish_modem(session);
 }
 
 /* ---- Visibility, keep-screen-on and settings ---- */
@@ -2919,6 +2964,7 @@ static bool receive_message(struct fplinux_session *session, struct peer *peer,
 		process->control_fd = peer->fd;
 		process->connected = true;
 		send_config(session, process);
+		send_modem_to(session, process, &session->modem);
 		return true;
 	}
 	switch (message->type) {
@@ -3814,6 +3860,7 @@ static void advance(struct fplinux_session *session)
 	if (clock_due(session))
 		clear_held_scene(session);
 	poll_power(session, time);
+	poll_modem(session, time);
 	manage_processes(session, time, &needs_tick);
 	quick_settings_gone(session);
 	if (session->volume_preview_active &&
@@ -3857,6 +3904,8 @@ static void advance(struct fplinux_session *session)
 	    memcmp(&clock_presentation,
 		   &session->last_active.clock_presentation,
 		   sizeof(clock_presentation)) ||
+	    memcmp(&session->modem, &session->last_active.modem,
+		   sizeof(session->modem)) ||
 	    !session->active_known ||
 	    session->active_display != session->power.display ||
 	    session->active_locked != session->power.locked ||
@@ -3880,6 +3929,8 @@ static void advance(struct fplinux_session *session)
 			 fplinux_session_power_deadline(&session->power));
 	if (session->options.power_supply_dir)
 		consider(&earliest, session->charger_poll_ms);
+	if (session->options.modem_dir)
+		consider(&earliest, session->modem_poll_ms);
 	if (session->settings_retry_ms)
 		consider(&earliest, session->settings_retry_ms);
 	if (fplinux_session_clock_deadline(&session->clock, time))
@@ -3996,6 +4047,7 @@ fplinux_session_create(const struct fplinux_session_options *options)
 	if (!session)
 		return NULL;
 	session->options = *options;
+	session->modem.signal = -1;
 	session->output_width = options->width;
 	session->output_height = options->height;
 	session->profile = profile;

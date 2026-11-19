@@ -37,6 +37,7 @@
 #include <linux/regmap.h>
 #include <linux/slab.h>
 #include <linux/string.h>
+#include <linux/sysfs.h>
 
 #define GSM_MAGIC "V1GGE_Bugid__990513_"
 
@@ -80,10 +81,18 @@ struct ums9117_modem {
 	struct regmap *pmu_apb;
 	struct mbox_client mbox_client;
 	struct mbox_chan *dsp_chan;
+	struct class *status_class;
+	struct device *status_dev;
 	u32 nv_stub;
 	bool nv_stub_set;
 	bool gsm_loaded;
 	bool lte_loaded;
+	/*
+	 * Published by the Linux NAS/AT producer through sysfs. -1 and an empty
+	 * name mean unknown; the loader never guesses either value from the DSP.
+	 */
+	int signal_level;
+	char operator_name[64];
 };
 
 static int load_one(struct ums9117_modem *modem, const struct dsp_image *img,
@@ -386,6 +395,74 @@ static ssize_t load_lte_store(struct device *dev, struct device_attribute *attr,
 	return count;
 }
 
+/*
+ * The loader does not derive cellular status from the DSP. A Linux NAS/AT
+ * producer owns these two attributes; until it publishes a measurement, signal
+ * is -1 and the operator name is empty.
+ */
+static ssize_t signal_level_show(struct device *dev,
+				 struct device_attribute *attr, char *buf)
+{
+	struct ums9117_modem *modem = dev_get_drvdata(dev);
+
+	return sysfs_emit(buf, "%d\n", modem->signal_level);
+}
+
+static ssize_t signal_level_store(struct device *dev,
+				  struct device_attribute *attr,
+				  const char *buf, size_t count)
+{
+	struct ums9117_modem *modem = dev_get_drvdata(dev);
+	int level;
+	int ret;
+
+	ret = kstrtoint(buf, 10, &level);
+	if (ret)
+		return ret;
+	if (level < -1 || level > 5)
+		return -EINVAL;
+	modem->signal_level = level;
+	return count;
+}
+
+static bool operator_name_valid(const char *name, size_t length)
+{
+	if (length >= sizeof(((struct ums9117_modem *)0)->operator_name))
+		return false;
+	for (size_t i = 0; i < length; ++i) {
+		unsigned char byte = name[i];
+
+		if (byte < 0x20 || byte == 0x7f)
+			return false;
+	}
+	return true;
+}
+
+static ssize_t operator_name_show(struct device *dev,
+				  struct device_attribute *attr, char *buf)
+{
+	struct ums9117_modem *modem = dev_get_drvdata(dev);
+
+	return sysfs_emit(buf, "%s\n", modem->operator_name);
+}
+
+static ssize_t operator_name_store(struct device *dev,
+				   struct device_attribute *attr,
+				   const char *buf, size_t count)
+{
+	struct ums9117_modem *modem = dev_get_drvdata(dev);
+	size_t length = count;
+
+	/* sysfs show appends a newline; accept it as a terminator only. */
+	if (length && buf[length - 1] == '\n')
+		--length;
+	if (!operator_name_valid(buf, length))
+		return -EINVAL;
+	memcpy(modem->operator_name, buf, length);
+	modem->operator_name[length] = '\0';
+	return count;
+}
+
 static DEVICE_ATTR_RO(loaded);
 static DEVICE_ATTR_RO(dsp_ready);
 static DEVICE_ATTR_RW(nv_stub);
@@ -394,6 +471,27 @@ static DEVICE_ATTR_WO(load_gsm);
 static DEVICE_ATTR_WO(load_lte);
 static DEVICE_ATTR_WO(power_on);
 static DEVICE_ATTR_WO(handshake);
+static DEVICE_ATTR_RW(signal_level);
+static DEVICE_ATTR_RW(operator_name);
+
+static struct attribute *status_attrs[] = {
+	&dev_attr_signal_level.attr,
+	&dev_attr_operator_name.attr,
+	NULL,
+};
+ATTRIBUTE_GROUPS(status);
+
+static void destroy_status(struct ums9117_modem *modem)
+{
+	if (modem->status_dev) {
+		device_destroy(modem->status_class, 0);
+		modem->status_dev = NULL;
+	}
+	if (!IS_ERR_OR_NULL(modem->status_class)) {
+		class_destroy(modem->status_class);
+		modem->status_class = NULL;
+	}
+}
 
 static struct attribute *modem_attrs[] = {
 	&dev_attr_loaded.attr,
@@ -419,6 +517,7 @@ static int ums9117_modem_probe(struct platform_device *pdev)
 	if (!modem)
 		return -ENOMEM;
 	modem->dev = dev;
+	modem->signal_level = -1;
 
 	res = platform_get_resource_byname(pdev, IORESOURCE_MEM, "dsp-gsm");
 	if (!res)
@@ -516,8 +615,33 @@ static int ums9117_modem_probe(struct platform_device *pdev)
 		modem->nv_stub_set = true;
 
 	platform_set_drvdata(pdev, modem);
+
+	/* A stable class device lets userspace publish cellular status without
+	 * depending on the platform device's numbered path.
+	 */
+	modem->status_class = class_create("fplinux_modem");
+	if (IS_ERR(modem->status_class)) {
+		ret = PTR_ERR(modem->status_class);
+		modem->status_class = NULL;
+		goto out_mbox;
+	}
+	modem->status_dev = device_create_with_groups(
+		modem->status_class, dev, 0, modem, status_groups, "modem");
+	if (IS_ERR(modem->status_dev)) {
+		ret = PTR_ERR(modem->status_dev);
+		modem->status_dev = NULL;
+		destroy_status(modem);
+		goto out_mbox;
+	}
 	ret = sysfs_create_groups(&dev->kobj, modem_groups);
-	if (ret && modem->dsp_chan)
+	if (ret)
+		goto out_status;
+	return 0;
+
+out_status:
+	destroy_status(modem);
+out_mbox:
+	if (modem->dsp_chan)
 		mbox_free_channel(modem->dsp_chan);
 	return ret;
 }
@@ -527,6 +651,7 @@ static void ums9117_modem_remove(struct platform_device *pdev)
 	struct ums9117_modem *modem = platform_get_drvdata(pdev);
 
 	sysfs_remove_groups(&pdev->dev.kobj, modem_groups);
+	destroy_status(modem);
 	if (modem->dsp_chan)
 		mbox_free_channel(modem->dsp_chan);
 }

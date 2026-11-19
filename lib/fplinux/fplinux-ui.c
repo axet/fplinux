@@ -2984,6 +2984,7 @@ bool fplinux_ui_send(struct fplinux_ui *ui,
 	    message->type == FPLINUX_UI_SESSION_PREPARE_CLOSE ||
 	    message->type == FPLINUX_UI_SESSION_STORAGE_REQUEST ||
 	    message->type == FPLINUX_UI_SESSION_STORAGE_RESULT ||
+	    message->type == FPLINUX_UI_SESSION_MODEM ||
 	    (message->type >= FPLINUX_UI_SESSION_OPEN_FILE &&
 	     message->type <= FPLINUX_UI_SESSION_DOCUMENT_RESULT)) {
 		errno = EINVAL;

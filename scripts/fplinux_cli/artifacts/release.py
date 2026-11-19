@@ -48,6 +48,7 @@ _ROOT_FILES = frozenset(
         ".clang-format",
         ".editorconfig",
         ".gitattributes",
+        ".gitleaks.toml",
         ".gitignore",
         ".markdownlint-cli2.jsonc",
         ".prettierignore",
@@ -178,9 +179,13 @@ def _git(root: Path, *arguments: str) -> bytes:
     except subprocess.TimeoutExpired:
         fail("public source Git inventory timed out after 60s")
     if result.returncode:
-        detail = result.stderr.decode(errors="replace").strip()
+        stderr = result.stderr
+        if isinstance(stderr, str):
+            stderr = stderr.encode()
+        detail = stderr.decode(errors="replace").strip()
         fail(f"cannot read public source Git identity: {detail}")
-    return result.stdout
+    stdout = result.stdout
+    return stdout if isinstance(stdout, bytes) else stdout.encode()
 
 
 def _source_paths(root: Path, *, git_checkout: bool, selected_data_root: Path) -> tuple[str, ...]:

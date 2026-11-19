@@ -377,6 +377,7 @@ static void check_state_packets(int sender, int receiver)
 		.enabled = true,
 		.battery = 14,
 		.charging = true,
+		.modem = { .signal = 4 },
 		.theme = FPLINUX_UI_SESSION_THEME_DARK,
 	};
 	struct fplinux_ui_session_message received;
@@ -395,6 +396,7 @@ static void check_state_packets(int sender, int receiver)
 	strcpy(sent.name, "list");
 	strcpy(sent.value, "catalogue");
 	strcpy(sent.notice, "battery-low");
+	strcpy(sent.modem.operator_name, "Operator");
 	check(fplinux_ui_session_send(sender, &sent) &&
 		      fplinux_ui_session_receive(receiver, &received) == 1 &&
 		      received.type == FPLINUX_UI_SESSION_ACTIVE &&
@@ -411,9 +413,11 @@ static void check_state_packets(int sender, int receiver)
 		      !strcmp(received.name, "list") &&
 		      !strcmp(received.value, "catalogue") &&
 		      received.battery == 14 && received.charging &&
+		      received.modem.signal == 4 &&
+		      !strcmp(received.modem.operator_name, "Operator") &&
 		      !strcmp(received.notice, "battery-low") &&
 		      received.theme == FPLINUX_UI_SESSION_THEME_DARK,
-	      "ACTIVE round-trips titles, languages, lock, battery and serial");
+	      "ACTIVE round-trips titles, languages, lock, battery, modem and serial");
 	check(fplinux_ui_session_send(sender, &ack) &&
 		      fplinux_ui_session_receive(receiver, &received) == 1 &&
 		      received.type == FPLINUX_UI_SESSION_ACTIVE_ACK &&
@@ -475,8 +479,9 @@ static void check_state_packets(int sender, int receiver)
 	check(receive_raw(sender, receiver,
 			  "{\"type\":\"ACTIVE\",\"battery\":-1}",
 			  &received) == 1 &&
-		      received.battery == -1,
-	      "battery -1 means no battery");
+		      received.battery == -1 && received.modem.signal == -1 &&
+		      !received.modem.operator_name[0],
+	      "battery -1 means no battery and an absent modem object is unknown");
 	check(receive_raw(sender, receiver,
 			  "{\"type\":\"SELECT\",\"selected_id\":\"org.a\","
 			  "\"value\":\"catalogue\"}",
@@ -570,6 +575,86 @@ static void check_clock_presentation(int sender, int receiver)
 	sent.type = FPLINUX_UI_SESSION_HOME;
 	check(!fplinux_ui_session_send(sender, &sent) && errno == EINVAL,
 	      "only ACTIVE publishes Home clock state");
+}
+
+static void check_modem(int sender, int receiver)
+{
+	static const char *const invalid[] = {
+		"{\"type\":\"HOME\",\"modem\":{\"signal\":0,\"operator_name\":\"\"}}",
+		"{\"type\":\"ACTIVE\",\"modem\":[]}",
+		"{\"type\":\"ACTIVE\",\"modem\":{\"signal\":0}}",
+		"{\"type\":\"ACTIVE\",\"modem\":{\"operator_name\":\"\"}}",
+		"{\"type\":\"ACTIVE\",\"modem\":{\"signal\":0,\"junk\":1}}",
+		"{\"type\":\"ACTIVE\",\"modem\":{\"junk\":1,\"operator_name\":\"\"}}",
+		"{\"type\":\"ACTIVE\",\"modem\":{\"signal\":0,\"operator_name\":\"\",\"extra\":1}}",
+		"{\"type\":\"MODEM\"}",
+		"{\"type\":\"MODEM\",\"modem\":{\"signal\":0}}",
+		"{\"type\":\"MODEM\",\"modem\":{\"operator_name\":\"\"}}",
+		"{\"type\":\"MODEM\",\"modem\":{\"signal\":0,\"junk\":1}}",
+		"{\"type\":\"ACTIVE\",\"modem\":{\"signal\":-2,\"operator_name\":\"\"}}",
+		"{\"type\":\"ACTIVE\",\"modem\":{\"signal\":6,\"operator_name\":\"\"}}",
+		"{\"type\":\"ACTIVE\",\"modem\":{\"signal\":\"3\",\"operator_name\":\"\"}}",
+		"{\"type\":\"ACTIVE\",\"modem\":{\"signal\":0,\"operator_name\":123}}",
+		"{\"type\":\"ACTIVE\",\"modem\":{\"signal\":0,\"operator_name\":\"12345678901234567890123456789012\"}}",
+		"{\"type\":\"ACTIVE\",\"modem\":{\"signal\":0,\"operator_name\":\"a\\u000bb\"}}",
+	};
+	struct fplinux_ui_session_message sent = {
+		.type = FPLINUX_UI_SESSION_ACTIVE,
+		.modem = { .signal = -1 },
+	};
+	struct fplinux_ui_session_message received;
+
+	check(receive_raw(
+		      sender, receiver,
+		      "{\"type\":\"ACTIVE\",\"modem\":{\"signal\":2,\"operator_name\":\"Оператор\"}}",
+		      &received) == 1 &&
+		      received.modem.signal == 2 &&
+		      !strcmp(received.modem.operator_name, "Оператор"),
+	      "literal ACTIVE carries a published signal level and operator");
+	check(receive_raw(
+		      sender, receiver,
+		      "{\"type\":\"ACTIVE\",\"modem\":{\"signal\":-1,\"operator_name\":\"\"}}",
+		      &received) == 1 &&
+		      received.modem.signal == -1 &&
+		      !received.modem.operator_name[0],
+	      "literal unknown modem state clears a previous operator");
+	sent.modem.signal = 5;
+	strcpy(sent.modem.operator_name, "Network");
+	check(fplinux_ui_session_send(sender, &sent) &&
+		      fplinux_ui_session_receive(receiver, &received) == 1 &&
+		      received.modem.signal == 5 &&
+		      !strcmp(received.modem.operator_name, "Network"),
+	      "modem state round-trips through the serializer");
+	check(receive_raw(
+		      sender, receiver,
+		      "{\"type\":\"MODEM\",\"modem\":{\"signal\":1,\"operator_name\":\"Typed\"}}",
+		      &received) == 1 &&
+		      received.type == FPLINUX_UI_SESSION_MODEM &&
+		      received.modem.signal == 1 &&
+		      !strcmp(received.modem.operator_name, "Typed"),
+	      "literal MODEM is a typed status packet for non-launchers");
+	sent.type = FPLINUX_UI_SESSION_MODEM;
+	sent.modem.signal = 2;
+	strcpy(sent.modem.operator_name, "MODEM Network");
+	check(fplinux_ui_session_send(sender, &sent) &&
+		      fplinux_ui_session_receive(receiver, &received) == 1 &&
+		      received.type == FPLINUX_UI_SESSION_MODEM &&
+		      received.modem.signal == 2 &&
+		      !strcmp(received.modem.operator_name, "MODEM Network"),
+	      "typed MODEM round-trips with its required nested fields");
+	sent.type = FPLINUX_UI_SESSION_ACTIVE;
+	sent.modem.signal = 6;
+	check(!fplinux_ui_session_send(sender, &sent) && errno == EINVAL,
+	      "a signal above five bars is not sent");
+	sent.modem.signal = 0;
+	strcpy(sent.modem.operator_name, "bad\nname");
+	check(!fplinux_ui_session_send(sender, &sent) && errno == EINVAL,
+	      "an operator with a control byte is not sent");
+	for (size_t i = 0; i < sizeof(invalid) / sizeof(invalid[0]); ++i)
+		check(receive_raw(sender, receiver, invalid[i], &received) ==
+				      -1 &&
+			      errno == EPROTO,
+		      "modem state rejects unknown fields, bounds and misplaced packets");
 }
 
 static void check_clock_packets(int sender, int receiver)
@@ -1226,6 +1311,7 @@ int main(void)
 	check_simple_packets(pair[0], pair[1]);
 	check_clock_packets(pair[0], pair[1]);
 	check_clock_presentation(pair[0], pair[1]);
+	check_modem(pair[0], pair[1]);
 	check_input_locales(pair[0], pair[1]);
 	check_lifecycle(pair[0], pair[1]);
 	check_activation(pair[0], pair[1]);

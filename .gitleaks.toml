@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: GPL-2.0-only
+title = "FPLinux gitleaks allowlist"
+
+[extend]
+useDefault = true
+
+[allowlist]
+paths = ['''(^|/)\.data/''', '''(^|/)node_modules/''', '''(^|/)site/runtime/''']

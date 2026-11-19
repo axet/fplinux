@@ -71,6 +71,8 @@ enum fplinux_ui_session_message_type {
 	FPLINUX_UI_SESSION_DOCUMENT_RESULT,
 	FPLINUX_UI_SESSION_STORAGE_REQUEST,
 	FPLINUX_UI_SESSION_STORAGE_RESULT,
+	/* Manager-only cellular status for consumers other than the launcher. */
+	FPLINUX_UI_SESSION_MODEM,
 };
 
 struct fplinux_ui_session_document_choice {
@@ -115,6 +117,16 @@ enum fplinux_ui_session_theme {
 	FPLINUX_UI_SESSION_THEME_DARK,
 };
 
+/*
+ * Source-agnostic cellular status supplied by the Linux modem stack. -1 means
+ * no signal measurement, 0..5 are bars; an empty operator means unknown. These
+ * values are published by a producer, never inferred by the session manager.
+ */
+struct fplinux_ui_session_modem {
+	int signal;
+	char operator_name[FPLINUX_UI_SESSION_NAME_BYTES];
+};
+
 struct fplinux_ui_session_clock_presentation {
 	bool analog;
 	/* The nearest alarm uses UTC, or a monotonic snooze deadline. */
@@ -136,7 +148,8 @@ struct fplinux_ui_session_clock_presentation {
  *
  * READY follows the first submitted frame. ACTIVE names an application only
  * after that frame, and supplies the launcher's title, three softkey labels,
- * view (value), presentation (name), theme, display, lock and battery state.
+ * view (value), presentation (name), theme, display, lock, battery and modem
+ * state.
  * A nonzero ACTIVE serial is acknowledged after the launcher commits its new
  * view and receives the following Wayland sync reply. ACTIVE_ACK carries that
  * serial; the manager may finish the handoff after 500 ms without an answer.
@@ -178,6 +191,11 @@ struct fplinux_ui_session_clock_presentation {
  * its Wayland commit and following server sync. Queries carry no redraw serial.
  * ACTIVE.battery is 0..100 or -1 without a battery. notice is empty,
  * battery-low or battery-critical; DISMISS(notice) acknowledges that notice.
+ * ACTIVE.modem.signal is -1 when unknown or 0..5 bars, and modem.operator_name
+ * is empty when unknown. The manager only relays values published by the
+ * modem's status source; it does not derive either value from DSP state.
+ * ACTIVE is launcher-only; MODEM carries the same bounded snapshot to other
+ * consumers, including on their first connection. Clients never send MODEM.
  *
  * TASKS without a tasks array is a launcher-only query. The manager supplies
  * the complete bounded snapshot, including [] when no tasks remain. Each
@@ -227,6 +245,7 @@ struct fplinux_ui_session_message {
 	char value[FPLINUX_UI_SESSION_TEXT_BYTES];
 	int battery;
 	bool charging;
+	struct fplinux_ui_session_modem modem;
 	char notice[FPLINUX_UI_SESSION_NAME_BYTES];
 	/* ACTIVE/ACK, ACTIVATION/ACK, CLOCK, settings/ACK or close preparation. */
 	uint32_t serial;

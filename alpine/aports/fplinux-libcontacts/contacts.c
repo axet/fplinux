@@ -67,8 +67,8 @@ static void trim_line(char *s)
 {
 	size_t n = strlen(s);
 
-	while (n > 0 && (s[n - 1] == '\r' || s[n - 1] == '\n' || s[n - 1] == ' ' ||
-			 s[n - 1] == '\t'))
+	while (n > 0 && (s[n - 1] == '\r' || s[n - 1] == '\n' ||
+			 s[n - 1] == ' ' || s[n - 1] == '\t'))
 		s[--n] = '\0';
 }
 
@@ -93,7 +93,8 @@ static void unfold_vcard(char *text)
 	char *w = text;
 
 	while (*r) {
-		if (r[0] == '\r' && r[1] == '\n' && (r[2] == ' ' || r[2] == '\t')) {
+		if (r[0] == '\r' && r[1] == '\n' &&
+		    (r[2] == ' ' || r[2] == '\t')) {
 			r += 3;
 			continue;
 		}
@@ -117,7 +118,8 @@ static void decode_value(const char *in, char *out, size_t out_size)
 			if (in[1] == 'n' || in[1] == 'N') {
 				out[i++] = '\n';
 				in += 2;
-			} else if (in[1] == '\\' || in[1] == ';' || in[1] == ',') {
+			} else if (in[1] == '\\' || in[1] == ';' ||
+				   in[1] == ',') {
 				out[i++] = in[1];
 				in += 2;
 			} else {
@@ -202,8 +204,8 @@ static void extract_tel_type(const char *line, char *type, size_t type_size)
 			const char *v = p + 5;
 			size_t i = 0;
 
-			while (v[i] && v[i] != ';' && v[i] != ':' && v[i] != ',' &&
-			       i + 1 < type_size) {
+			while (v[i] && v[i] != ';' && v[i] != ':' &&
+			       v[i] != ',' && i + 1 < type_size) {
 				type[i] = (char)toupper((unsigned char)v[i]);
 				i++;
 			}
@@ -216,15 +218,15 @@ static void extract_tel_type(const char *line, char *type, size_t type_size)
 			const char *v = p;
 			size_t i = 0;
 
-			while (v[i] && v[i] != ';' && v[i] != ':' && v[i] != ',' &&
-			       v[i] != '=')
+			while (v[i] && v[i] != ';' && v[i] != ':' &&
+			       v[i] != ',' && v[i] != '=')
 				i++;
 			if (i > 0 && v[i] != '=' && i + 1 < type_size) {
 				size_t k = 0;
 
 				for (k = 0; k < i && k + 1 < type_size; k++)
-					type[k] =
-						(char)toupper((unsigned char)v[k]);
+					type[k] = (char)toupper(
+						(unsigned char)v[k]);
 				type[k] = '\0';
 				/* ignore VALUE= etc */
 				if (strcmp(type, "VOICE") == 0 ||
@@ -356,10 +358,16 @@ bool fplinux_contact_load_file(const char *path,
 	size = ftell(f);
 	if (size < 0 || size > 1024 * 1024) {
 		fclose(f);
-		errno = size > 1024 * 1024 ? EFBIG : errno;
+		if (size > 1024 * 1024)
+			errno = EFBIG;
 		return false;
 	}
+	errno = 0;
 	rewind(f);
+	if (errno) {
+		fclose(f);
+		return false;
+	}
 	buf = malloc((size_t)size + 1);
 	if (!buf) {
 		fclose(f);
@@ -425,14 +433,15 @@ size_t fplinux_contact_format_vcard(const struct fplinux_contact *contact,
 				     "TEL;TYPE=%s:%s\r\n", contact->tel[i].type,
 				     enc_tel);
 		else
-			m = snprintf(out + n, out_size - (size_t)n, "TEL:%s\r\n",
-				     enc_tel);
+			m = snprintf(out + n, out_size - (size_t)n,
+				     "TEL:%s\r\n", enc_tel);
 		if (m < 0 || (size_t)m >= out_size - (size_t)n)
 			return (size_t)-1;
 		n += m;
 	}
 	{
-		int m = snprintf(out + n, out_size - (size_t)n, "END:VCARD\r\n");
+		int m = snprintf(out + n, out_size - (size_t)n,
+				 "END:VCARD\r\n");
 
 		if (m < 0 || (size_t)m >= out_size - (size_t)n)
 			return (size_t)-1;
@@ -578,7 +587,8 @@ bool fplinux_contact_list_load(const char *dir,
 		size_t name_len = strlen(ent->d_name);
 		int ret;
 
-		if (name_len < 4 || strcasecmp(ent->d_name + name_len - 4, ".vcf") != 0)
+		if (name_len < 4 ||
+		    strcasecmp(ent->d_name + name_len - 4, ".vcf") != 0)
 			continue;
 		ret = snprintf(path, sizeof(path), "%s/%s", dir, ent->d_name);
 		if (ret < 0 || (size_t)ret >= sizeof(path))

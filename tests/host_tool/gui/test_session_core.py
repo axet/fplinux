@@ -85,6 +85,7 @@ def session_core_harness(tmp_path_factory: pytest.TempPathFactory) -> Path:
             str(APORT / "session-settings.c"),
             str(ROOT / "lib/fplinux/fplinux-settings-values.c"),
             str(APORT / "session-battery.c"),
+            str(APORT / "session-modem.c"),
             str(APORT / "session-clock.c"),
             str(ROOT / "alpine/aports/fplinux-clocks/clock-model.c"),
             str(ROOT / "alpine/aports/fplinux-clocks/clock-wire.c"),
@@ -238,6 +239,7 @@ def session_core_harness(tmp_path_factory: pytest.TempPathFactory) -> Path:
         "battery-charger-wake-charged",
         "battery-charger-wake-low",
         "battery-charger-wake-critical",
+        "modem-status",
     ],
 )
 def test_session_manager_host_behavior(session_core_harness: Path, scenario: str) -> None:

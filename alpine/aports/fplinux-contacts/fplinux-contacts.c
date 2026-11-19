@@ -107,10 +107,12 @@ static void show_list(struct contacts_app *app);
 static void show_view(struct contacts_app *app, const char *uid);
 static void show_edit(struct contacts_app *app, const char *uid);
 
-static void view_command(struct fplinux_ui *ui, struct fplinux_ui_screen *screen,
-			 int id, void *context);
-static void edit_command(struct fplinux_ui *ui, struct fplinux_ui_screen *screen,
-			 int id, void *context);
+static void view_command(struct fplinux_ui *ui,
+			 struct fplinux_ui_screen *screen, int id,
+			 void *context);
+static void edit_command(struct fplinux_ui *ui,
+			 struct fplinux_ui_screen *screen, int id,
+			 void *context);
 static void delete_command(struct fplinux_ui *ui,
 			   struct fplinux_ui_screen *screen, int id,
 			   void *context);
@@ -131,8 +133,9 @@ static void populate_list_screen(struct contacts_app *app)
 	}
 }
 
-static void list_command(struct fplinux_ui *ui, struct fplinux_ui_screen *screen,
-			 int id, void *context)
+static void list_command(struct fplinux_ui *ui,
+			 struct fplinux_ui_screen *screen, int id,
+			 void *context)
 {
 	struct contacts_app *app = context;
 	size_t index;
@@ -163,9 +166,8 @@ static void show_list(struct contacts_app *app)
 	if (app->list_screen && fplinux_ui_current(app->ui) == app->list_screen)
 		return;
 	if (!app->list_screen) {
-		app->list_screen =
-			fplinux_ui_list_new(app->ui, _("Contacts"),
-					    FPLINUX_UI_LIST_IMPLICIT);
+		app->list_screen = fplinux_ui_list_new(
+			app->ui, _("Contacts"), FPLINUX_UI_LIST_IMPLICIT);
 		if (!app->list_screen) {
 			perror("fplinux-contacts: list");
 			return;
@@ -207,8 +209,8 @@ static void show_view(struct contacts_app *app, const char *uid)
 		return;
 
 	/* recreate view screen each time for simplicity */
-	app->view_screen = fplinux_ui_form_new(app->ui,
-					       c->fn[0] ? c->fn : _("Contact"));
+	app->view_screen =
+		fplinux_ui_form_new(app->ui, c->fn[0] ? c->fn : _("Contact"));
 	if (!app->view_screen)
 		return;
 	set_app_data(app, app->view_screen);
@@ -230,9 +232,10 @@ static void show_view(struct contacts_app *app, const char *uid)
 	screen_add_cmd(app, app->view_screen, CMD_DELETE,
 		       FPLINUX_UI_COMMAND_SCREEN, _("Delete"), "delete", 1,
 		       false);
-	screen_add_cmd(app, app->view_screen, CMD_BACK,
-		       FPLINUX_UI_COMMAND_BACK, NULL, "back", 10, false);
-	fplinux_ui_screen_set_listener(app->view_screen, view_command, NULL, app);
+	screen_add_cmd(app, app->view_screen, CMD_BACK, FPLINUX_UI_COMMAND_BACK,
+		       NULL, "back", 10, false);
+	fplinux_ui_screen_set_listener(app->view_screen, view_command, NULL,
+				       app);
 	fplinux_ui_push(app->ui, app->view_screen);
 }
 
@@ -275,8 +278,9 @@ static void ask_delete(struct contacts_app *app)
 	fplinux_ui_push(app->ui, app->delete_alert);
 }
 
-static void view_command(struct fplinux_ui *ui, struct fplinux_ui_screen *screen,
-			 int id, void *context)
+static void view_command(struct fplinux_ui *ui,
+			 struct fplinux_ui_screen *screen, int id,
+			 void *context)
 {
 	struct contacts_app *app = context;
 
@@ -334,6 +338,8 @@ static void show_edit(struct contacts_app *app, const char *uid)
 	const char *name = "";
 	const char *tel = "";
 
+	if (!app)
+		return;
 	app->edit_is_new = (uid == NULL || uid[0] == '\0');
 	if (!app->edit_is_new) {
 		strncpy(app->current_uid, uid, sizeof(app->current_uid) - 1);
@@ -350,7 +356,8 @@ static void show_edit(struct contacts_app *app, const char *uid)
 	}
 
 	app->edit_screen = fplinux_ui_form_new(
-		app->ui, app->edit_is_new ? _("New contact") : _("Edit contact"));
+		app->ui,
+		app->edit_is_new ? _("New contact") : _("Edit contact"));
 	if (!app->edit_screen)
 		return;
 	set_app_data(app, app->edit_screen);
@@ -360,8 +367,8 @@ static void show_edit(struct contacts_app *app, const char *uid)
 		app->edit_screen, _("Phone"), tel, 48, FPLINUX_UI_TEXT_PHONE);
 	fplinux_ui_form_set_focus(app->edit_screen, app->edit_name_item);
 
-	screen_add_cmd(app, app->edit_screen, CMD_SAVE,
-		       FPLINUX_UI_COMMAND_OK, _("Save"), "save", 0, true);
+	screen_add_cmd(app, app->edit_screen, CMD_SAVE, FPLINUX_UI_COMMAND_OK,
+		       _("Save"), "save", 0, true);
 	screen_add_cmd(app, app->edit_screen, CMD_BACK,
 		       FPLINUX_UI_COMMAND_CANCEL, _("Cancel"), "cancel", 1,
 		       true);
@@ -431,8 +438,9 @@ static bool save_edit(struct contacts_app *app)
 	return true;
 }
 
-static void edit_command(struct fplinux_ui *ui, struct fplinux_ui_screen *screen,
-			 int id, void *context)
+static void edit_command(struct fplinux_ui *ui,
+			 struct fplinux_ui_screen *screen, int id,
+			 void *context)
 {
 	struct contacts_app *app = context;
 
