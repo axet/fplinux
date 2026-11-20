@@ -46,7 +46,8 @@
 		};
 
 		dsp_lte: dsp-lte@80448000 {
-			reg = <0x80448000 0x002e4000>;
+			/* Stock LTE image is 0x300000 bytes; fit the full payload. */
+			reg = <0x80448000 0x00300000>;
 			no-map;
 		};
 
@@ -61,7 +62,7 @@
 		/* Cellular DSP loader (image load + opt-in power-on from CP RE). */
 		modem@80100000 {
 			compatible = "fplinux,ums9117-modem";
-			reg = <0x80100000 0x00300000>, <0x80448000 0x002e4000>,
+			reg = <0x80100000 0x00300000>, <0x80448000 0x00300000>,
 			      <0x80447000 0x00001000>;
 			firmware-name-gsm = "ums9117/gsm_dsp.bin";
 			firmware-name-lte = "ums9117/lte_dsp.bin";

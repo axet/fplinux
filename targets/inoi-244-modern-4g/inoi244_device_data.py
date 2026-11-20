@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 
 from fplinux_cli.device_data.bluetooth_firmware import REQUIRED_BLUETOOTH_PARTITIONS
 from fplinux_cli.device_data.fitted import prepare_from_partitions
+from fplinux_cli.device_data.modem_dsp import REQUIRED_MODEM_DSP_PARTITIONS
 from fplinux_cli.device_data.partitions import discover_partitions
 
 if TYPE_CHECKING:
@@ -24,8 +25,11 @@ def prepare_device_data(
     """Prepare declared groups from one NAND object and one fixed-NV parse per copy."""
     return prepare_from_partitions(
         nand,
-        discover_partitions(nand, REQUIRED_BLUETOOTH_PARTITIONS).extents,
+        discover_partitions(
+            nand, {**REQUIRED_BLUETOOTH_PARTITIONS, **REQUIRED_MODEM_DSP_PARTITIONS}
+        ).extents,
         prefix="inoi244",
         audio=audio,
         include_lte_calibration=True,
+        include_modem_dsp=True,
     )
