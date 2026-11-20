@@ -9,12 +9,12 @@
  * Shared contacts storage and lookup.
  *
  * Contacts are normal vCard (.vcf) files in one directory so they are easy to
- * edit and sync. The primary location is /sdcard/vcards. Each file stores one
+ * edit and sync. The primary location is /mnt/card/vcards. Each file stores one
  * contact (BEGIN:VCARD ... END:VCARD) with a stable UID used as the contact id
  * and, by default, as the file name (<uid>.vcf).
  */
 
-#define FPLINUX_CONTACTS_DEFAULT_DIR "/sdcard/vcards"
+#define FPLINUX_CONTACTS_DEFAULT_DIR "/mnt/card/vcards"
 #define FPLINUX_CONTACTS_NAME_BYTES 256
 #define FPLINUX_CONTACTS_NUMBER_BYTES 64
 #define FPLINUX_CONTACTS_UID_BYTES 64
