@@ -146,6 +146,8 @@ def preparation_source_files(
         selected.extend(_EMMC_MODULES)
     if {"bluetooth", "fm-radio", "lte-calibration"} & groups.keys():
         selected.extend(_RADIO_MODULES)
+    if "modem-dsp" in groups:
+        selected.append("device_data/modem_dsp.py")
     if {"bluetooth", "wcn-firmware"} & groups.keys():
         selected.append("device_data/running_nv.py")
     files = {

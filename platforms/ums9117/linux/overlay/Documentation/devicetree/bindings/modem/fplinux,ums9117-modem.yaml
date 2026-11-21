@@ -81,7 +81,7 @@ examples:
   - |
     modem@80100000 {
         compatible = "fplinux,ums9117-modem";
-        reg = <0x80100000 0x300000>, <0x80448000 0x2e4000>,
+        reg = <0x80100000 0x300000>, <0x80448000 0x300000>,
               <0x80447000 0x1000>;
         reg-names = "dsp-gsm", "dsp-lte", "dsp-shared";
         firmware-name-gsm = "ums9117/gsm_dsp.bin";

@@ -34,6 +34,7 @@ def create_device_data_initramfs(
         "audio-profile",
         "lte-calibration",
         "wcn-firmware",
+        "modem-dsp",
     ):
         for firmware in groups.get(group, ()):
             stored_name, contents = firmware_storage(firmware)

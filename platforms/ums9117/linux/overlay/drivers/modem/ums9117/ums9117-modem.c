@@ -37,8 +37,8 @@
 #include <linux/regmap.h>
 #include <linux/slab.h>
 #include <linux/string.h>
-#include <asm/unaligned.h>
 #include <linux/sysfs.h>
+#include <linux/unaligned.h>
 
 #define GSM_MAGIC "V1GGE_Bugid__990513_"
 
@@ -391,6 +391,9 @@ static int dsp_power_on(struct ums9117_modem *modem)
 	if (!modem->aon_apb || !modem->pmu_apb || !modem->shared_virt)
 		return -ENODEV;
 
+	/* Align with stock cold path: FUN_81146c24 in FUN_81146c3a then
+	 * FUN_80c25904(1), before FUN_811c2458/810d1230/release in caller.
+	 */
 	/* FUN_81146c24: clear DSP start bit, enable DSP clock. */
 	ret = regmap_update_bits(modem->aon_apb, AON_DSP_CTRL, BIT(0), 0);
 	if (ret)
@@ -425,7 +428,9 @@ static int dsp_power_on(struct ums9117_modem *modem)
 		dev_info(modem->dev, "DSP NV stub = 0x%08x\n", modem->nv_stub);
 	}
 
-	/* Tail of FUN_81146dd8: interrupt/vector handshake. */
+	/* Tail of FUN_81146dd8: after FUN_811c2458, run FUN_810d1230(1)
+	 * then release sequence 0xe984(0),0xe97c(1),0xe980(vec),0xe984(1),0xe97c(0).
+	 */
 	ret = regmap_update_bits(modem->aon_apb, AON_MISC_CFG, 0x9620, 0x9620);
 	if (ret)
 		return ret;
@@ -450,7 +455,8 @@ static int dsp_power_on(struct ums9117_modem *modem)
 		dev_info(modem->dev, "DSP mailbox channel bound (target 3)\n");
 
 	{
-		u32 aon_ctrl = 0, aon_vec = 0, pmu_2044 = 0, pmu_20cc = 0, pmu_2034 = 0;
+		u32 aon_ctrl = 0, aon_vec = 0, aon_clk = 0, aon_misc = 0;
+		u32 pmu_2044 = 0, pmu_20cc = 0, pmu_2034 = 0;
 		u32 e00 = readl(modem->shared_virt + DSP_NV_STUB_OFFSET);
 		u32 e04 = readl(modem->shared_virt + 0xe04);
 		u32 e08 = readl(modem->shared_virt + 0xe08);
@@ -460,6 +466,8 @@ static int dsp_power_on(struct ums9117_modem *modem)
 
 		regmap_read(modem->aon_apb, AON_DSP_CTRL, &aon_ctrl);
 		regmap_read(modem->aon_apb, AON_DSP_VEC, &aon_vec);
+		regmap_read(modem->aon_apb, AON_CLK_EB, &aon_clk);
+		regmap_read(modem->aon_apb, AON_MISC_CFG, &aon_misc);
 		regmap_read(modem->pmu_apb, PMU_DSP_CLK_EB0, &pmu_2044);
 		regmap_read(modem->pmu_apb, PMU_DSP_CFG, &pmu_20cc);
 		regmap_read(modem->pmu_apb, PMU_DSP_CLK_EB1, &pmu_2034);
@@ -474,8 +482,12 @@ static int dsp_power_on(struct ums9117_modem *modem)
 			e08, e0c, e10, e14);
 		dev_info(
 			modem->dev,
-			"DSP power-on regs: aon[24c]=0x%08x aon[248]=0x%08x pmu[2044]=0x%08x pmu[20cc]=0x%08x pmu[2034]=0x%08x\n",
-			aon_ctrl, aon_vec, pmu_2044, pmu_20cc, pmu_2034);
+			"DSP regs: aon[24c]=0x%08x aon[248]=0x%08x aon[130]=0x%08x aon[06c]=0x%08x\n",
+			aon_ctrl, aon_vec, aon_clk, aon_misc);
+		dev_info(
+			modem->dev,
+			"DSP pmu: [2044]=0x%08x [20cc]=0x%08x [2034]=0x%08x\n",
+			pmu_2044, pmu_20cc, pmu_2034);
 	}
 	/* Cold start is complete here: the CP does not wait for a ready magic
 	 * on the first boot path. Use the "handshake" attribute for the re-init
@@ -493,6 +505,45 @@ static ssize_t dsp_ready_show(struct device *dev, struct device_attribute *attr,
 		return -ENODEV;
 	return sysfs_emit(buf, "0x%08x\n",
 			  readl(modem->shared_virt + DSP_READY_OFFSET));
+}
+
+static ssize_t shared_e00_show(struct device *dev, struct device_attribute *attr,
+			       char *buf)
+{
+	struct ums9117_modem *modem = dev_get_drvdata(dev);
+
+	if (!modem->shared_virt)
+		return -ENODEV;
+	return sysfs_emit(buf, "0x%08x\n",
+			  readl(modem->shared_virt + DSP_NV_STUB_OFFSET));
+}
+
+static ssize_t shared_e14_show(struct device *dev, struct device_attribute *attr,
+			       char *buf)
+{
+	struct ums9117_modem *modem = dev_get_drvdata(dev);
+
+	if (!modem->shared_virt)
+		return -ENODEV;
+	return sysfs_emit(buf, "0x%08x\n",
+			  readl(modem->shared_virt + DSP_READY_OFFSET));
+}
+
+static ssize_t shared_e14_store(struct device *dev,
+				struct device_attribute *attr, const char *buf,
+				size_t count)
+{
+	struct ums9117_modem *modem = dev_get_drvdata(dev);
+	u32 value;
+	int ret;
+
+	if (!modem->shared_virt)
+		return -ENODEV;
+	ret = kstrtou32(buf, 0, &value);
+	if (ret)
+		return ret;
+	writel(value, modem->shared_virt + DSP_READY_OFFSET);
+	return count;
 }
 
 /* The stock word combines the NV lookup result in the low half with flags in
@@ -660,9 +711,11 @@ static ssize_t lte_calib_store(struct device *dev, struct device_attribute *attr
 
 	if (len && buf[len - 1] == '\n')
 		len--;
-	name = devm_kstrndup(dev, buf, len, GFP_KERNEL);
+	name = devm_kmalloc(dev, len + 1, GFP_KERNEL);
 	if (!name)
 		return -ENOMEM;
+	memcpy(name, buf, len);
+	name[len] = '\0';
 	modem->lte_calib_name = name;
 	modem->lte_nv_staged = false;
 	return count;
@@ -809,6 +862,8 @@ static ssize_t operator_name_store(struct device *dev,
 
 static DEVICE_ATTR_RO(loaded);
 static DEVICE_ATTR_RO(dsp_ready);
+static DEVICE_ATTR_RO(shared_e00);
+static DEVICE_ATTR_RW(shared_e14);
 static DEVICE_ATTR_RW(nv_stub);
 static DEVICE_ATTR_WO(load);
 static DEVICE_ATTR_WO(load_gsm);
@@ -821,6 +876,21 @@ static DEVICE_ATTR_RW(operator_name);
 static struct attribute *status_attrs[] = {
 	&dev_attr_signal_level.attr,
 	&dev_attr_operator_name.attr,
+	&dev_attr_loaded.attr,
+	&dev_attr_dsp_ready.attr,
+	&dev_attr_lte_nv_staged.attr,
+	&dev_attr_shared_e00.attr,
+	&dev_attr_shared_e04.attr,
+	&dev_attr_shared_e08.attr,
+	&dev_attr_shared_e0c.attr,
+	&dev_attr_shared_e10.attr,
+	&dev_attr_shared_e14.attr,
+	&dev_attr_shared_e18.attr,
+	&dev_attr_shared_e1c.attr,
+	&dev_attr_shared_e20.attr,
+	&dev_attr_shared_e24.attr,
+	&dev_attr_mbox_rx_count.attr,
+	&dev_attr_mbox_rx_last.attr,
 	NULL,
 };
 ATTRIBUTE_GROUPS(status);
@@ -845,10 +915,12 @@ static struct attribute *modem_attrs[] = {
 	&dev_attr_nv_e04_mask.attr,
 	&dev_attr_lte_nv_staged.attr,
 	&dev_attr_lte_calib.attr,
+	&dev_attr_shared_e00.attr,
 	&dev_attr_shared_e04.attr,
 	&dev_attr_shared_e08.attr,
 	&dev_attr_shared_e0c.attr,
 	&dev_attr_shared_e10.attr,
+	&dev_attr_shared_e14.attr,
 	&dev_attr_shared_e18.attr,
 	&dev_attr_shared_e1c.attr,
 	&dev_attr_shared_e20.attr,

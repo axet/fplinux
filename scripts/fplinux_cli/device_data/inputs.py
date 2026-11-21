@@ -51,6 +51,7 @@ def rootfs_firmware_inputs(
         *device_data.get("fm-radio", ()),
         *device_data.get("lte-calibration", ()),
         *device_data.get("wcn-firmware", ()),
+        *device_data.get("modem-dsp", ()),
     )
 
 
@@ -206,6 +207,10 @@ def _require_input_file(path: Path, root: Path, prefix: str) -> None:
 
 def firmware_storage(firmware: FirmwareInput) -> tuple[str, bytes]:
     """Use the kernel's XZ fallback when it reduces the stored firmware."""
+    # The modem DSP loader uses request_firmware_direct() for these exact names,
+    # so runtime delivery must keep them uncompressed.
+    if firmware.destination in {"ums9117/gsm_dsp.bin", "ums9117/lte_dsp.bin"}:
+        return firmware.destination, firmware.contents
     compressed = lzma.compress(
         firmware.contents,
         format=lzma.FORMAT_XZ,

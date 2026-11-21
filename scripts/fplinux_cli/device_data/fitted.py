@@ -22,6 +22,7 @@ from fplinux_cli.device_data.lte_calibration import (
     LTE_CALIBRATION_RECORD_SIZES,
     prepare_lte_calibration,
 )
+from fplinux_cli.device_data.modem_dsp import prepare_modem_dsp
 
 if TYPE_CHECKING:
     from fplinux_cli.device_data.formats import AudioProfileContext
@@ -34,6 +35,7 @@ def prepare_from_partitions(
     prefix: str,
     audio: AudioProfileContext,
     include_lte_calibration: bool = False,
+    include_modem_dsp: bool = False,
 ) -> DeviceDataPreparation:
     """Prepare shared fitted groups from one parse of each fixed-NV copy."""
     required_sizes = {
@@ -75,4 +77,6 @@ def prepare_from_partitions(
     }
     if include_lte_calibration:
         groups["lte-calibration"] = prepare_lte_calibration(downloaded, protected, prefix=prefix)
+    if include_modem_dsp:
+        groups["modem-dsp"] = prepare_modem_dsp(nand, partitions, prefix=prefix)
     return DeviceDataPreparation(groups=groups)
